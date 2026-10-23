@@ -215,3 +215,28 @@ def test_safety_check_adds_incidents_the_model_missed(analyzer):
     # A question is answered as asked, without the check.
     ollama2 = FakeOllama([{"role": "assistant", "content": "It scanned ports."}])
     assert SecurityAnalystAgent(analyzer, ollama=ollama2).ask("What did it do?").report == "It scanned ports."
+
+
+def test_safety_check_works_section_by_section(analyzer):
+    from netmon.agent import add_missing_incidents
+
+    alerts = [
+        {"ts": T0, "severity": "high", "kind": "Threat intel", "source": "192.168.1.12", "target": "bad.example",
+         "message": "192.168.1.12 looked up bad.example (blocklist)."},
+        {"ts": T0, "severity": "medium", "kind": "Suspicious DNS", "source": "192.168.1.12", "target": "bad.example",
+         "message": "random-looking name"},
+        {"ts": T0, "severity": "medium", "kind": "Risky port", "source": "192.168.1.1", "target": "192.168.1.10:23",
+         "message": "Telnet"},
+        {"ts": T0, "severity": "medium", "kind": "Anomaly (ML)", "source": "192.168.1.12", "target": "behaviour",
+         "message": "unusual"},
+    ]
+    report = ("## Summary\nThreat intel and telnet from 192.168.1.12 and 192.168.1.1.\n"
+              "### Suspicious DNS - medium\n- 192.168.1.12 looked up a random-looking domain.\n"
+              "### Odd ports\n- 192.168.1.11 used port 23.")
+    out, missing = add_missing_incidents(report, alerts)
+    kinds = sorted(g["type"] for g in missing)
+    # Threat intel for .12 is only in the summary, and the DNS section does not mention the blocklist;
+    # the Telnet alert is for 192.168.1.1, and "192.168.1.11" must not count as a mention of it.
+    # The ML anomaly for .12 is covered because .12 is discussed in a section.
+    assert kinds == ["Risky port", "Threat intel"]
+    assert "overall risk is High" in out

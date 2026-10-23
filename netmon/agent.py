@@ -18,6 +18,7 @@ instead, so the tool always works.
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 import urllib.request
@@ -486,19 +487,66 @@ class SecurityAnalystAgent:
         return AgentResult(text, "ai", steps, note=f"Stopped after {self.max_steps} tool rounds.")
 
 
+# Words that show a report section is about a given incident type.
+TYPE_KEYWORDS = {
+    "Threat intel": ("threat intel", "blocklist", "block list", "known-bad", "known bad", "malicious server"),
+    "Port scan": ("scan", "probed", "probing"),
+    "SYN flood": ("flood", "denial of service", "syn"),
+    "High traffic": ("traffic", "upload", "exfiltrat", "sent", "data transfer"),
+    "Suspicious DNS": ("dns", "domain", "tunnel"),
+    "Risky port": ("risky port", "telnet", "ftp", "rdp", "remote desktop", "smb", "vnc", "unencrypted",
+                   "backdoor", "irc", "sql server"),
+    "New device": ("new device", "joined", "unknown device"),
+    "Anomaly (ML)": ("anomal", "machine learning", "unusual"),
+}
+
+
+def _sections(report: str) -> list[str]:
+    """The report split at its headings, leaving out the summary (a passing mention there is not coverage)."""
+    sections, current = [], []
+    for line in report.splitlines():
+        if line.lstrip().startswith("#") and current:
+            sections.append("\n".join(current))
+            current = []
+        current.append(line)
+    if current:
+        sections.append("\n".join(current))
+    return [sec.lower() for sec in sections if "summary" not in sec.splitlines()[0].lower()]
+
+
+def _mentions_ip(text: str, ip: str) -> bool:
+    return re.search(r"(?<![\d.])" + re.escape(ip.lower()) + r"(?![\d])", text) is not None
+
+
 def add_missing_incidents(report: str, alerts: list) -> tuple[str, list]:
-    """Safety check on the AI's report: any high or medium incident it did not mention is appended, so a
-    weaker model can never silently drop a serious finding."""
-    text = report.lower()
-    missing = [g for g in incident_summary(alerts)
-               if g["severity"] in ("high", "medium") and not (g["type"].lower() in text and g["source"] in text)]
+    """Safety check on the AI's report: every high or medium incident must be covered by a section that names
+    both the device and the kind of problem. Anything missing is appended, so a weaker model can never silently
+    drop a serious finding. An ML anomaly only confirms other findings, so it counts as covered when its device is
+    discussed anywhere."""
+    sections = _sections(report)
+    missing = []
+    for g in incident_summary(alerts):
+        if g["severity"] not in ("high", "medium"):
+            continue
+        about_device = [sec for sec in sections if _mentions_ip(sec, g["source"])]
+        if g["type"] == "Anomaly (ML)":
+            covered = bool(about_device)
+        else:
+            words = TYPE_KEYWORDS.get(g["type"], (g["type"].lower(),))
+            covered = any(any(w in sec for w in words) for sec in about_device)
+        if not covered:
+            missing.append(g)
     if not missing:
         return report, []
     extra = ["", "## Also detected (added by the safety check - the AI did not cover these)"]
+    by_type: dict = {}
     for g in missing:
-        extra += [f"### {g['type']} - {g['severity'].capitalize()}",
-                  f"- {g['example']}" + (f" ({g['count']} alerts)" if g["count"] > 1 else "")]
-        extra += [f"  - {step}" for step in PLAYBOOKS.get(g["type"], [])[:2]]
+        by_type.setdefault(g["type"], []).append(g)
+    for kind, groups in by_type.items():
+        severity = min((g["severity"] for g in groups), key=lambda sv: SEVERITY_ORDER.get(sv, 9))
+        extra.append(f"### {kind} - {severity.capitalize()}")
+        extra += [f"- {g['example']}" + (f" ({g['count']} alerts)" if g["count"] > 1 else "") for g in groups]
+        extra += [f"  - {step}" for step in PLAYBOOKS.get(kind, [])[:2]]
     if any(g["severity"] == "high" for g in missing):
         extra += ["", "**Because of this, the overall risk is High**, whatever the summary above says."]
     return report.rstrip() + "\n" + "\n".join(extra), missing

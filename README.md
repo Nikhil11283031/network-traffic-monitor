@@ -17,7 +17,7 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 - Unsupervised ML anomaly detection (Isolation Forest) that learns your network's normal behaviour
 - MITRE ATT&CK technique on every alert, linked to the official description
 - AI analyst agent (Claude, or free and local with Ollama) with a verification safety check
-- 37 automated tests, GitHub Actions CI and a Docker image
+- 38 automated tests, GitHub Actions CI and a Docker image
 
 ![Dashboard](docs/dashboard.png)
 
@@ -248,7 +248,7 @@ python3 -m pytest
 GitHub Actions (`.github/workflows/tests.yml`) runs the tests on Python 3.10, 3.11 and 3.12 on every push, runs
 the demo, and builds and runs the Docker image. The badge at the top shows the result.
 
-37 tests cover MITRE tagging, every threat-intelligence feed format and the feed download, the ML detector
+38 tests cover MITRE tagging, every threat-intelligence feed format and the feed download, the ML detector
 (learning, flagging only unusual behaviour, the demo capture, running without scikit-learn), and each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary
 long domain names), configurable thresholds, an end-to-end run over the sample capture, and the AI agent: the
 tool-calling loop (with a scripted fake Claude client, so no API key is needed), the step limit, the offline
