@@ -21,8 +21,10 @@ def to_packet_info(pkt) -> PacketInfo | None:
 
     if IP in pkt:
         src, dst = pkt[IP].src, pkt[IP].dst
+        length = max(length, len(pkt) - len(pkt[IP]) + (pkt[IP].len or 0))  # real size if the capture was cut short
     elif IPv6 in pkt:
         src, dst = pkt[IPv6].src, pkt[IPv6].dst
+        length = max(length, len(pkt) - len(pkt[IPv6]) + 40 + (pkt[IPv6].plen or 0))
     else:
         return None
 
@@ -74,6 +76,7 @@ def _dpkt_info(ts: float, buf: bytes, linktype: int):
     import dpkt
 
     length, mac = len(buf), None
+    l2 = {1: 14, 113: 16, 0: 4, 108: 4}.get(linktype, 0)  # link-layer header size
     try:
         if linktype == dpkt.pcap.DLT_EN10MB:
             eth = dpkt.ethernet.Ethernet(buf)
@@ -97,10 +100,15 @@ def _dpkt_info(ts: float, buf: bytes, linktype: int):
             return None
     if isinstance(l3, dpkt.ip.IP):
         src, dst = socket.inet_ntop(socket.AF_INET, l3.src), socket.inet_ntop(socket.AF_INET, l3.dst)
+        wire = l3.len
     elif isinstance(l3, dpkt.ip6.IP6):
         src, dst = socket.inet_ntop(socket.AF_INET6, l3.src), socket.inet_ntop(socket.AF_INET6, l3.dst)
+        wire = 40 + l3.plen
     else:
         return None
+    # Captures are often saved with only the first bytes of each packet (tcpdump -s); the IP header still holds
+    # the real size, so use that for byte counts.
+    length = max(length, l2 + wire)
     l4 = l3.data
     if isinstance(l4, dpkt.tcp.TCP):
         flags = "".join(letter for bit, letter in _TCP_LETTERS if l4.flags & bit)

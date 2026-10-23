@@ -16,3 +16,6 @@ intel/*.txt
 netmon.db
 geoip/
 benchmark-results/
+
+# self-lab recordings (labs/self_lab.py)
+lab/

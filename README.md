@@ -425,3 +425,17 @@ fallback, bad tool input, clipping of long attacker-controlled strings, and the 
 
 Only monitor networks you own or have written permission to monitor. Capturing other people's traffic without
 permission is illegal in Australia and many other countries. The sample capture is fully simulated.
+
+### Self lab: test it on real traffic from your own computer
+
+No download needed. `labs/self_lab.py` records your computer's loopback interface (the private channel it uses
+to talk to itself) while running four harmless "attacks" against **your own computer only**: a port scan of
+ports 1-300, 30 SSH connection attempts (no passwords are sent), 15 random-looking DNS lookups, and an 8 MB
+upload to a temporary listener. It writes the recording and an exact answer key, then you score the monitor:
+
+```bash
+python3 labs/self_lab.py                       # about 4 minutes; asks for your password once (tcpdump)
+python3 -m netmon benchmark lab/lab.pcap --truth lab/lab-truth.json --ml-learn 50
+```
+
+Nothing is sent to other devices or the internet, and `lab/` is ignored by git.

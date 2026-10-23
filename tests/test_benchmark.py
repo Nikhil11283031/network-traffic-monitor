@@ -100,3 +100,18 @@ def test_benchmark_cli(tmp_path, capsys):
     assert main(["benchmark", DEMO, "--truth", str(ROOT / "samples" / "demo-truth.json"), "--no-ml",
                  "--ml-learn", "40", "--out", str(tmp_path)]) == 0
     assert (tmp_path / "demo.md").exists() and json.loads((tmp_path / "demo.json").read_text())["in_scope"] == 7
+
+
+def test_truncated_capture_uses_real_packet_size(tmp_path):
+    """tcpdump -s 256 saves only the start of each packet; byte counts must still use the real size."""
+    from scapy.all import IP, TCP, Ether, Raw, PcapReader, wrpcap
+
+    from netmon.capture import iter_pcap_fast, to_packet_info
+
+    p = Ether() / IP(src="192.168.1.11", dst="203.0.113.50") / TCP(sport=5000, dport=443, flags="A") / Raw(b"u" * 1400)
+    p.time = 1_792_000_000.0
+    path = tmp_path / "cut.pcap"
+    wrpcap(str(path), [p], snaplen=128)
+    fast = list(iter_pcap_fast(str(path)))[0].length
+    slow = to_packet_info(next(iter(PcapReader(str(path))))).length
+    assert fast == slow == len(p) == 14 + 20 + 20 + 1400
