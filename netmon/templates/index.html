@@ -56,6 +56,28 @@
   .risky { color: var(--high); font-weight: 600; }
   svg text { fill: var(--muted); font-size: 11px; }
   .table-wrap { overflow-x: auto; }
+  .agent-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .agent-head h2 { margin: 0; }
+  .mode { font-size: 12px; color: var(--muted); }
+  .mode b { color: var(--accent); }
+  .agent-controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+  .agent-controls input { flex: 1 1 260px; min-width: 0; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit; }
+  button { padding: 9px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent);
+    color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: wait; }
+  .examples { display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+  .examples a { color: var(--accent); cursor: pointer; text-decoration: none; border: 1px solid var(--line);
+    border-radius: 12px; padding: 2px 10px; }
+  .steps { font-size: 12px; color: var(--muted); margin: 8px 0; }
+  .steps code { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; margin: 2px; display: inline-block; }
+  .note { font-size: 12px; color: var(--medium); margin: 6px 0; }
+  .report { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 4px; overflow-wrap: anywhere; }
+  .report h3 { font-size: 16px; margin: 16px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+  .report h4 { font-size: 14px; margin: 14px 0 4px; }
+  .report p { margin: 6px 0; }
+  .report ul { margin: 4px 0; padding-left: 20px; }
 </style>
 </head>
 <body>
@@ -94,6 +116,24 @@
         <tbody id="alerts"></tbody>
       </table>
     </div>
+  </section>
+
+  <section class="panel" id="agent">
+    <div class="agent-head">
+      <h2>AI security analyst</h2>
+      <span class="mode">{% if agent_mode == "ai" %}Agent mode: <b>Claude ({{ model }})</b>{% else %}Agent mode: <b>offline rule-based analyst</b> · set ANTHROPIC_API_KEY to use Claude{% endif %}</span>
+    </div>
+    <div class="agent-controls">
+      <button id="investigate">Investigate now</button>
+      <input id="question" placeholder="Ask about the traffic, e.g. Is 192.168.1.12 infected?" maxlength="1000">
+      <button class="secondary" id="ask">Ask</button>
+    </div>
+    <div class="examples">
+      <a data-q="Which device is the biggest threat and why?">Biggest threat?</a>
+      <a data-q="What did 192.168.1.99 do on the network?">What did 192.168.1.99 do?</a>
+      <a data-q="Was the upload from 192.168.1.11 normal?">Was the upload normal?</a>
+    </div>
+    <div id="agent-out"></div>
   </section>
 
   <section class="grid3">
@@ -182,6 +222,43 @@ async function refresh() {
 }
 refresh();
 setInterval(refresh, 2000);
+
+// --- AI analyst -----------------------------------------------------------
+function markdown(text) {
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  let html = "", list = false;
+  for (const line of text.split("\n")) {
+    const item = line.match(/^\s*[-*] (.*)/);
+    if (item) { if (!list) { html += "<ul>"; list = true; } html += `<li>${inline(item[1])}</li>`; continue; }
+    if (list) { html += "</ul>"; list = false; }
+    const h = line.match(/^(#{1,3}) (.*)/);
+    if (h) html += `<h${h[1].length + 1}>${inline(h[2])}</h${h[1].length + 1}>`;
+    else if (line.trim()) html += `<p>${inline(line)}</p>`;
+  }
+  return html + (list ? "</ul>" : "");
+}
+
+async function runAgent(url, body) {
+  const out = $("agent-out"), buttons = [$("investigate"), $("ask")];
+  buttons.forEach((b) => (b.disabled = true));
+  out.innerHTML = `<p class="steps">The analyst is investigating… this can take up to a minute.</p>`;
+  try {
+    const res = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.error || res.statusText);
+    const steps = r.steps.length ? `<div class="steps">Investigation steps (${r.steps.length}): ` + r.steps.map((s) =>
+      `<code>${esc(s.tool)}${Object.keys(s.input).length ? "(" + esc(Object.values(s.input).join(", ")) + ")" : ""}</code>`).join(" → ") + "</div>" : "";
+    out.innerHTML = steps + (r.note ? `<div class="note">${esc(r.note)}</div>` : "") + `<div class="report">${markdown(r.report)}</div>`;
+  } catch (e) {
+    out.innerHTML = `<p class="note">Error: ${esc(e.message)}</p>`;
+  } finally {
+    buttons.forEach((b) => (b.disabled = false));
+  }
+}
+$("investigate").onclick = () => runAgent("/api/agent/investigate");
+$("ask").onclick = () => runAgent("/api/agent/ask", {question: $("question").value});
+$("question").addEventListener("keydown", (e) => { if (e.key === "Enter") $("ask").click(); });
+document.querySelectorAll(".examples a").forEach((a) => (a.onclick = () => { $("question").value = a.dataset.q; $("ask").click(); }));
 </script>
 </body>
 </html>

@@ -5,6 +5,9 @@
     python3 -m netmon pcap samples/demo.pcap        analyse a saved capture (no sudo needed)
     python3 -m netmon pcap samples/demo.pcap --speed 5   replay it live on the dashboard
     python3 -m netmon pcap samples/demo.pcap --no-web --report report.json
+    python3 -m netmon pcap samples/demo.pcap --no-web --investigate    AI analyst writes an incident report
+
+The AI analyst uses Claude when ANTHROPIC_API_KEY is set, otherwise a built-in rule-based analyst.
 """
 
 from __future__ import annotations
@@ -51,6 +54,8 @@ def main(argv=None):
         p.add_argument("--no-web", action="store_true", help="console output only, no dashboard")
         p.add_argument("--port", type=int, default=5050, help="dashboard port (default 5050)")
         p.add_argument("--report", help="save a JSON report to this file when finished")
+        p.add_argument("--investigate", action="store_true",
+                       help="when finished, have the AI analyst write an incident report (with --no-web)")
     args = parser.parse_args(argv)
 
     analyzer = Analyzer()
@@ -82,6 +87,19 @@ def main(argv=None):
         time.sleep(0.1)
         snapshot = analyzer.snapshot()
         print_summary(snapshot)
+        if args.investigate:
+            from .agent import SecurityAnalystAgent
+
+            agent = SecurityAnalystAgent(analyzer)
+            print(f"\n=== AI analyst ({agent.mode} mode) ===")
+            result = agent.investigate()
+            if result.steps:
+                print("Investigation steps: " + " -> ".join(
+                    s["tool"] + (f"({', '.join(map(str, s['input'].values()))})" if s["input"] else "")
+                    for s in result.steps))
+            if result.note:
+                print(f"Note: {result.note}")
+            print(result.report)
         if args.report:
             with open(args.report, "w") as f:
                 json.dump(snapshot, f, indent=2)

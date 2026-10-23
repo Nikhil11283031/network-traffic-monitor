@@ -124,6 +124,9 @@ class Analyzer:
         self.dns_domains: Counter = Counter()
         self.timeline: dict[int, list[int]] = {}  # second -> [packets, bytes]
         self.devices: dict[str, dict] = {}
+        self.host_peers: dict[str, Counter] = defaultdict(Counter)  # host -> {other host: bytes sent to it}
+        self.host_ports: dict[str, Counter] = defaultdict(Counter)  # host -> {port: connections started}
+        self.host_dns: dict[str, Counter] = defaultdict(Counter)  # host -> {name looked up: count}
         self.alerts: deque[Alert] = deque(maxlen=self.config.max_alerts)
         self._last_alert: dict[tuple, float] = {}
         self._scan = defaultdict(lambda: _Window(self.config.port_scan_window))
@@ -155,12 +158,14 @@ class Analyzer:
                 del self.timeline[old]
 
         self._track_device(p, new_alerts)
+        self.host_peers[p.src][p.dst] += p.length
 
         is_syn = p.proto == "TCP" and "S" in p.flags and "A" not in p.flags
         starts_conversation = is_syn or p.proto in ("UDP", "DNS")
 
         if p.dport is not None and starts_conversation:
             self.dst_ports[p.dport] += 1
+            self.host_ports[p.src][p.dport] += 1
 
         # Port scan: one host trying many different ports on another host in a short time.
         if p.dport is not None and starts_conversation:
@@ -199,6 +204,7 @@ class Analyzer:
         if p.dns_query:
             name = p.dns_query.rstrip(".").lower()
             self.dns_domains[base_domain(name)] += 1
+            self.host_dns[p.src][name] += 1
             label = max(name.split("."), key=len)
             entropy = shannon_entropy(label)
             if len(label) >= self.config.dns_label_length or (
@@ -237,6 +243,25 @@ class Analyzer:
         new_alerts.append(alert)
 
     # ------------------------------------------------------------------ reporting
+
+    def host_detail(self, ip: str) -> dict:
+        """Everything known about one host - used by the AI analyst."""
+        with self.lock:
+            return {
+                "ip": ip,
+                "known": ip in self.sent or ip in self.received,
+                "local_device": self.devices.get(ip),
+                "bytes_sent": self.sent[ip],
+                "bytes_received": self.received[ip],
+                "sent_to": [{"host": h, "bytes": n} for h, n in self.host_peers[ip].most_common(10)],
+                "received_from": sorted(({"host": h, "bytes": peers[ip]} for h, peers in self.host_peers.items()
+                                         if peers.get(ip)), key=lambda x: -x["bytes"])[:10],
+                "ports_contacted": [{"port": port, "count": n, "risky": port in RISKY_PORTS}
+                                    for port, n in self.host_ports[ip].most_common(15)],
+                "distinct_ports_contacted": len(self.host_ports[ip]),
+                "dns_lookups": [{"name": d, "count": n} for d, n in self.host_dns[ip].most_common(10)],
+                "alerts": [asdict(a) for a in self.alerts if ip in (a.source, a.target.split(":")[0])],
+            }
 
     def snapshot(self, timeline_seconds: int = 60) -> dict:
         with self.lock:

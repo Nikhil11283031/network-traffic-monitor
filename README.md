@@ -23,6 +23,52 @@ are in `Config` in `netmon/analyzer.py` and can be changed.
 The dashboard also shows packets per second, protocols, the hosts sending and receiving the most data, the
 ports being contacted (risky ones in red), DNS lookups by domain, and every device seen on the local network.
 
+## AI security analyst agent
+
+The dashboard has an **AI security analyst**: an agent built on Claude (Anthropic API) that investigates the
+traffic by itself and writes an incident report, or answers questions such as *"Is 192.168.1.12 infected?"*.
+
+![AI analyst](docs/agent.png)
+
+It works as a **tool-using agent loop** (`netmon/agent.py`):
+
+1. The agent receives the request and a list of tools it may call.
+2. Claude decides which tool it needs and the program runs it, for example `get_overview`, then
+   `get_host_activity("192.168.1.99")`, then `get_response_playbook("Port scan")`.
+3. The result goes back to Claude, which decides on the next step. This repeats (up to 10 rounds) until it has
+   enough evidence.
+4. It writes a report: summary and risk level, one section per incident with evidence, the likely explanation
+   (including innocent ones) and recommended actions. The dashboard shows each tool call it made.
+
+| Tool | What it returns |
+| --- | --- |
+| `get_overview` | Totals, protocols, top talkers, ports, DNS domains, devices, alert counts |
+| `list_alerts` | Alerts, filtered by severity or type |
+| `get_host_activity` | One IP: data sent/received, who it talked to, ports, DNS lookups, MAC, its alerts |
+| `get_dns_lookups` | DNS names looked up by a host, or the top domains |
+| `lookup_port` | The service on a port and whether it is risky |
+| `get_response_playbook` | Standard response steps for an alert type |
+
+**Safety design**
+
+- **Read-only tools.** The agent can look but cannot block traffic or change anything, so a wrong answer
+  cannot cause harm. A person decides what to do.
+- **Prompt-injection defence.** Packet contents (DNS names especially) are controlled by whoever sends the
+  packets. An attacker could look up a name like `ignore-previous-instructions...`. The system prompt tells the
+  model to treat all tool output as untrusted data, and long strings are cut to 120 characters.
+- **Fallback.** Without an API key, or if the API cannot be reached, a built-in **offline rule-based analyst**
+  writes the report from the alerts and playbooks, so the tool always works.
+
+**Turning on Claude**
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...          # from https://console.anthropic.com
+export NETMON_MODEL=claude-sonnet-5-5        # optional, this is the default
+python3 -m netmon pcap samples/demo.pcap --speed 5
+```
+
+Console only: `python3 -m netmon pcap samples/demo.pcap --no-web --investigate`.
+
 ## Setup
 
 Needs Python 3.10 or newer.
@@ -76,6 +122,9 @@ Other options: `--port 5051` to change the dashboard port, `--no-web` for consol
  .pcap file ────────► scapy PcapReader ┘          (capture.py)        (analyzer.py)          │
                                                                                              ▼
                                                      browser ◄── /api/snapshot (JSON) ◄── Flask (web.py)
+                                                        │                                    ▲
+                                                        └─► /api/agent ─► AI analyst ─► tools ┘ (read-only)
+                                                                         (agent.py) ◄─► Claude API
 ```
 
 - `netmon/capture.py` reads packets with **scapy** and turns each one into a small `PacketInfo` record
@@ -83,6 +132,7 @@ Other options: `--port 5051` to change the dashboard port, `--no-web` for consol
 - `netmon/analyzer.py` keeps running statistics and applies the detection rules using **sliding time windows**
   based on each packet's own timestamp, so a saved capture gives exactly the same results as watching live.
 - `netmon/web.py` serves the dashboard; the page asks for a fresh snapshot every two seconds.
+- `netmon/agent.py` is the AI analyst; it reads the same analyser through read-only tools.
 - Capture runs in a background thread; a lock keeps the statistics consistent while the dashboard reads them.
 
 ## Tests
@@ -91,8 +141,10 @@ Other options: `--port 5051` to change the dashboard port, `--no-web` for consol
 python3 -m pytest
 ```
 
-14 tests cover each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary
-long domain names), configurable thresholds, and an end-to-end run over the sample capture.
+20 tests cover each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary
+long domain names), configurable thresholds, an end-to-end run over the sample capture, and the AI agent: the
+tool-calling loop (with a scripted fake Claude client, so no API key is needed), the step limit, the offline
+fallback, bad tool input, clipping of long attacker-controlled strings, and the web endpoints.
 
 ## Limitations and ideas
 

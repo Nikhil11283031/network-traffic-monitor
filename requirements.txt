@@ -1,3 +1,4 @@
 scapy>=2.5
 flask>=3.0
+anthropic>=0.40
 pytest>=8.0
