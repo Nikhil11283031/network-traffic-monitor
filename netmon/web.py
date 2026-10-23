@@ -14,7 +14,7 @@ def create_app(analyzer: Analyzer, source: str, agent: SecurityAnalystAgent | No
 
     @app.get("/")
     def index():
-        return render_template("index.html", source=source, agent_mode=agent.mode, model=agent.model)
+        return render_template("index.html", source=source, agent_mode=agent.mode, agent_label=agent.label)
 
     @app.get("/api/snapshot")
     def snapshot():

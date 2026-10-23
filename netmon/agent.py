@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -234,24 +235,100 @@ def _block_to_dict(block) -> dict:
     return {"type": block.type}
 
 
+class OllamaClient:
+    """Talks to Ollama (https://ollama.com), which runs open AI models for free on your own computer.
+
+    Uses only the Python standard library. Your traffic data never leaves the machine.
+    """
+
+    PREFERRED = ("qwen2.5", "llama3.1", "llama3.2", "mistral-nemo", "mistral", "qwen3", "llama3.3")
+
+    def __init__(self, model: str, base_url: str | None = None, timeout: float = 300):
+        self.model = model
+        self.base_url = (base_url or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")).rstrip("/")
+        if not self.base_url.startswith("http"):
+            self.base_url = "http://" + self.base_url
+        self.timeout = timeout
+
+    @classmethod
+    def installed_models(cls, base_url: str | None = None) -> list[str]:
+        """Models installed in Ollama, or [] if Ollama is not running."""
+        try:
+            client = cls("", base_url, timeout=1.5)
+            with urllib.request.urlopen(client.base_url + "/api/tags", timeout=client.timeout) as res:
+                return [m["name"] for m in json.load(res).get("models", [])]
+        except Exception:
+            return []
+
+    @classmethod
+    def pick_model(cls, models: list[str]) -> str | None:
+        wanted = os.environ.get("NETMON_OLLAMA_MODEL")
+        if wanted:
+            return wanted
+        for family in cls.PREFERRED:
+            for name in models:
+                if name.startswith(family):
+                    return name
+        return models[0] if models else None
+
+    def chat(self, messages: list, tools: list | None) -> dict:
+        body = {"model": self.model, "messages": messages, "stream": False, "options": {"temperature": 0.2}}
+        if tools:
+            body["tools"] = tools
+        req = urllib.request.Request(self.base_url + "/api/chat", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=self.timeout) as res:
+            return json.load(res)["message"]
+
+
+OLLAMA_TOOLS = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
+                                                  "parameters": t["input_schema"]}} for t in TOOLS]
+
+
 class SecurityAnalystAgent:
-    def __init__(self, analyzer: Analyzer, client=None, model: str = DEFAULT_MODEL, max_steps: int = MAX_STEPS):
+    """Chooses the AI backend: Claude if ANTHROPIC_API_KEY is set, otherwise Ollama if it is running
+    (free, local), otherwise the offline rule-based analyst. NETMON_PROVIDER=claude|ollama|offline forces one."""
+
+    def __init__(self, analyzer: Analyzer, client=None, model: str = DEFAULT_MODEL, max_steps: int = MAX_STEPS,
+                 ollama: OllamaClient | None = None):
         self.analyzer = analyzer
         self.toolbox = Toolbox(analyzer)
         self.model = model
         self.max_steps = max_steps
         self.client = client
-        if self.client is None and os.environ.get("ANTHROPIC_API_KEY"):
-            try:
-                import anthropic
+        self.ollama = ollama
+        choice = os.environ.get("NETMON_PROVIDER", "auto").lower()
 
-                self.client = anthropic.Anthropic()
-            except ImportError:
-                self.client = None
+        if self.client is None and self.ollama is None:
+            if choice in ("auto", "claude") and os.environ.get("ANTHROPIC_API_KEY"):
+                try:
+                    import anthropic
+
+                    self.client = anthropic.Anthropic()
+                except ImportError:
+                    pass
+            if self.client is None and choice in ("auto", "ollama"):
+                name = OllamaClient.pick_model(OllamaClient.installed_models())
+                if name:
+                    self.ollama = OllamaClient(name)
+
+        if self.client is not None:
+            self.provider = "claude"
+        elif self.ollama is not None:
+            self.provider = "ollama"
+            self.model = self.ollama.model
+        else:
+            self.provider = "offline"
 
     @property
     def mode(self) -> str:
-        return "ai" if self.client else "offline"
+        return "offline" if self.provider == "offline" else "ai"
+
+    @property
+    def label(self) -> str:
+        return {"claude": f"Claude ({self.model})",
+                "ollama": f"Ollama - {self.model} (free, runs on this computer)",
+                "offline": "offline rule-based analyst"}[self.provider]
 
     def investigate(self) -> AgentResult:
         return self._run("Investigate the current traffic and alerts and write the incident report.")
@@ -260,39 +337,72 @@ class SecurityAnalystAgent:
         return self._run(question.strip()[:1000])
 
     def _run(self, request: str) -> AgentResult:
-        if not self.client:
-            return OfflineAnalyst(self.analyzer).answer(request, note="AI mode is off (no ANTHROPIC_API_KEY set), "
-                                                                       "so the built-in rule-based analyst wrote this.")
-        messages = [{"role": "user", "content": request}]
-        steps = []
+        if self.provider == "offline":
+            return OfflineAnalyst(self.analyzer).answer(
+                request, note="AI mode is off, so the built-in rule-based analyst answered. For free AI answers, "
+                              "install Ollama (see README); or set ANTHROPIC_API_KEY to use Claude.")
+        steps: list = []
         try:
-            for _ in range(self.max_steps):
-                response = self.client.messages.create(model=self.model, max_tokens=2500, system=SYSTEM_PROMPT,
-                                                       tools=TOOLS, messages=messages)
-                content = [_block_to_dict(b) for b in response.content]
-                messages.append({"role": "assistant", "content": content})
-                if response.stop_reason != "tool_use":
-                    text = "\n".join(b["text"] for b in content if b["type"] == "text").strip()
-                    return AgentResult(text or "(The agent returned no text.)", "ai", steps)
-                results = []
-                for block in content:
-                    if block["type"] == "tool_use":
-                        output = self.toolbox.run(block["name"], block["input"])
-                        steps.append({"tool": block["name"], "input": block["input"]})
-                        results.append({"type": "tool_result", "tool_use_id": block["id"],
-                                        "content": json.dumps(output, default=str)})
-                messages.append({"role": "user", "content": results})
-            messages.append({"role": "user", "content": "Stop investigating and write your answer now from what "
-                                                        "you have found."})
-            response = self.client.messages.create(model=self.model, max_tokens=2500, system=SYSTEM_PROMPT,
-                                                   messages=messages, tools=TOOLS, tool_choice={"type": "none"})
-            text = "\n".join(b.text for b in response.content if b.type == "text").strip()
-            return AgentResult(text, "ai", steps, note=f"Stopped after {self.max_steps} tool rounds.")
+            if self.provider == "claude":
+                return self._run_claude(request, steps)
+            return self._run_ollama(request, steps)
         except Exception as exc:
             result = OfflineAnalyst(self.analyzer).answer(request)
-            result.note = f"The AI analyst could not be reached ({type(exc).__name__}), so the built-in analyst wrote this."
+            result.note = (f"The AI analyst ({self.provider}) failed ({type(exc).__name__}: {str(exc)[:80]}), "
+                           "so the built-in analyst answered.")
             result.steps = steps
             return result
+
+    def _run_claude(self, request: str, steps: list) -> AgentResult:
+        messages = [{"role": "user", "content": request}]
+        for _ in range(self.max_steps):
+            response = self.client.messages.create(model=self.model, max_tokens=2500, system=SYSTEM_PROMPT,
+                                                   tools=TOOLS, messages=messages)
+            content = [_block_to_dict(b) for b in response.content]
+            messages.append({"role": "assistant", "content": content})
+            if response.stop_reason != "tool_use":
+                text = "\n".join(b["text"] for b in content if b["type"] == "text").strip()
+                return AgentResult(text or "(The agent returned no text.)", "ai", steps)
+            results = []
+            for block in content:
+                if block["type"] == "tool_use":
+                    output = self.toolbox.run(block["name"], block["input"])
+                    steps.append({"tool": block["name"], "input": block["input"]})
+                    results.append({"type": "tool_result", "tool_use_id": block["id"],
+                                    "content": json.dumps(output, default=str)})
+            messages.append({"role": "user", "content": results})
+        messages.append({"role": "user", "content": "Stop investigating and write your answer now from what "
+                                                    "you have found."})
+        response = self.client.messages.create(model=self.model, max_tokens=2500, system=SYSTEM_PROMPT,
+                                               messages=messages, tools=TOOLS, tool_choice={"type": "none"})
+        text = "\n".join(b.text for b in response.content if b.type == "text").strip()
+        return AgentResult(text, "ai", steps, note=f"Stopped after {self.max_steps} tool rounds.")
+
+    def _run_ollama(self, request: str, steps: list) -> AgentResult:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": request}]
+        for _ in range(self.max_steps):
+            message = self.ollama.chat(messages, OLLAMA_TOOLS)
+            calls = message.get("tool_calls") or []
+            messages.append({"role": "assistant", "content": message.get("content", ""), "tool_calls": calls})
+            if not calls:
+                text = (message.get("content") or "").strip()
+                return AgentResult(text or "(The model returned no text.)", "ai", steps)
+            for call in calls:
+                fn = call.get("function", {})
+                args = fn.get("arguments") or {}
+                if isinstance(args, str):  # some models send the arguments as a JSON string
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {}
+                output = self.toolbox.run(fn.get("name", ""), args)
+                steps.append({"tool": fn.get("name", "?"), "input": args})
+                messages.append({"role": "tool", "tool_name": fn.get("name", ""),
+                                 "content": json.dumps(output, default=str)})
+        messages.append({"role": "user", "content": "Stop investigating and write your answer now from what "
+                                                    "you have found."})
+        text = (self.ollama.chat(messages, None).get("content") or "").strip()
+        return AgentResult(text, "ai", steps, note=f"Stopped after {self.max_steps} tool rounds.")
 
 
 class OfflineAnalyst:
@@ -303,12 +413,73 @@ class OfflineAnalyst:
     def __init__(self, analyzer: Analyzer):
         self.analyzer = analyzer
 
+    SCORE = {"high": 5, "medium": 2, "low": 1, "info": 0}
+
     def answer(self, request: str, note: str = "") -> AgentResult:
         snap = self.analyzer.snapshot()
-        ips = [w.strip("?.,") for w in request.split() if w.strip("?.,").count(".") == 3]
-        if ips:
-            return AgentResult(self._host_report(ips[0]), "offline", note=note)
-        return AgentResult(self._full_report(snap), "offline", note=note)
+        q = request.lower()
+        ips = [w.strip("?.,!") for w in request.split() if w.strip("?.,!").count(".") == 3]
+        if any(w in q for w in ("upload", "exfil", "data leav", "sent a lot", "bandwidth")):
+            text = self._uploads(snap, only=ips[0] if ips else None)
+        elif ips:
+            text = self._host_report(ips[0])
+        elif any(w in q for w in ("biggest", "worst", "dangerous", "threat", "most serious", "riskiest")):
+            text = self._biggest_threat(snap)
+        elif "dns" in q or "domain" in q:
+            text = self._kind_answer(snap, "Suspicious DNS", "No suspicious DNS lookups were detected.")
+        elif "scan" in q:
+            text = self._kind_answer(snap, "Port scan", "No port scans were detected.")
+        else:
+            text = self._full_report(snap)
+        return AgentResult(text, "offline", note=note)
+
+    def _biggest_threat(self, snap) -> str:
+        scores = defaultdict(int)
+        for a in snap["alerts"]:
+            scores[a["source"]] += self.SCORE.get(a["severity"], 0)
+        if not scores:
+            return "## Biggest threat\nNo suspicious activity has been detected, so there is no clear threat."
+        ranked = sorted(scores, key=scores.get, reverse=True)
+        top = ranked[0]
+        d = self.analyzer.host_detail(top)
+        kinds = sorted({a["kind"] for a in d["alerts"]}, key=lambda k: self.ORDER.index(k) if k in self.ORDER else 99)
+        lines = ["## Biggest threat", f"**{top}** is the biggest threat (threat score {scores[top]}, from "
+                 f"{len(d['alerts'])} alerts: {', '.join(kinds)})."]
+        if d["local_device"] and any(a["kind"] == "New device" for a in d["alerts"]):
+            lines.append(f"It is a device that was not on the network at the start (MAC {d['local_device']['mac']}), "
+                         "and it then behaved like an attacker looking for weaknesses.")
+        lines += [f"- {a['message']}" for a in sorted(d["alerts"], key=lambda a: a["ts"])]
+        lines += ["", "**What to do first:**"] + [f"- {step}" for step in PLAYBOOKS.get(kinds[0], [])]
+        if len(ranked) > 1:
+            lines += ["", "**Next most concerning:** " + ", ".join(f"{h} (score {scores[h]})" for h in ranked[1:4]) + "."]
+        return "\n".join(lines)
+
+    def _uploads(self, snap, only: str | None = None) -> str:
+        heavy = [a for a in snap["alerts"] if a["kind"] == "High traffic" and (only is None or a["source"] == only)]
+        if not heavy:
+            top = max(snap["top_talkers"], key=lambda t: t["sent"], default=None)
+            extra = f" The largest sender was {top['host']} ({top['sent'] / 1e6:.2f} MB in total)." if top else ""
+            return "## Uploads\nNo unusually large uploads were detected." + extra
+        lines = ["## Uploads"]
+        for host in sorted({a["source"] for a in heavy}):
+            d = self.analyzer.host_detail(host)
+            dest = d["sent_to"][0] if d["sent_to"] else {"host": "unknown", "bytes": 0}
+            outside = not (dest["host"].startswith(("10.", "192.168.", "172.")))
+            lines += [f"### {host}",
+                      f"Sent {d['bytes_sent'] / 1e6:.1f} MB in total, mostly to **{dest['host']}** "
+                      f"({dest['bytes'] / 1e6:.1f} MB){' - a server outside your network' if outside else ''}.",
+                      "**Is it normal?** Probably not, unless it was expected. Large uploads are normal for cloud "
+                      "backups, photo syncing (iCloud, Google Photos) or video calls. If nobody was doing one of "
+                      "those on this device, treat it as possible data theft."]
+            lines += ["", "**Recommended actions:**"] + [f"- {step}" for step in PLAYBOOKS["High traffic"]]
+        return "\n".join(lines)
+
+    def _kind_answer(self, snap, kind, empty) -> str:
+        items = [a for a in snap["alerts"] if a["kind"] == kind]
+        if not items:
+            return f"## {kind}\n{empty}"
+        return "\n".join([f"## {kind}"] + [f"- {a['message']}" for a in sorted(items, key=lambda a: a["ts"])]
+                         + ["", "**Recommended actions:**"] + [f"- {step}" for step in PLAYBOOKS.get(kind, [])])
 
     def _full_report(self, snap) -> str:
         alerts = snap["alerts"]

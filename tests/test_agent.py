@@ -84,12 +84,13 @@ def test_falls_back_to_offline_when_api_fails(analyzer):
 
     result = SecurityAnalystAgent(analyzer, client=Broken()).investigate()
     assert result.mode == "offline"
-    assert "could not be reached" in result.note
+    assert "failed (ConnectionError" in result.note
     assert "### Port scan - High" in result.report
 
 
 def test_offline_mode_without_key(analyzer, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("NETMON_PROVIDER", "offline")
     agent = SecurityAnalystAgent(analyzer)
     assert agent.mode == "offline"
     report = agent.investigate().report
@@ -121,3 +122,59 @@ def test_web_endpoints(analyzer):
     r = app.post("/api/agent/ask", json={"question": "Anything wrong?"}).get_json()
     assert r["report"] == "All quiet." and r["mode"] == "ai"
     assert client.requests[0]["messages"][0]["content"] == "Anything wrong?"
+
+
+class FakeOllama:
+    model = "qwen2.5:7b"
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.requests = []
+
+    def chat(self, messages, tools):
+        self.requests.append({"messages": json.loads(json.dumps(messages)), "tools": tools})
+        return self.replies.pop(0)
+
+
+def test_ollama_agent_loop(analyzer):
+    ollama = FakeOllama([
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"function": {"name": "get_host_activity", "arguments": {"ip": "192.168.1.99"}}}]},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"function": {"name": "lookup_port", "arguments": '{"port": 23}'}}]},  # arguments as a JSON string
+        {"role": "assistant", "content": "## Summary\n192.168.1.99 scanned the laptop."},
+    ])
+    agent = SecurityAnalystAgent(analyzer, ollama=ollama)
+    assert agent.provider == "ollama" and agent.mode == "ai" and "free" in agent.label
+    result = agent.ask("What did 192.168.1.99 do?")
+    assert result.report.startswith("## Summary")
+    assert [s["tool"] for s in result.steps] == ["get_host_activity", "lookup_port"]
+    first = ollama.requests[0]
+    assert first["messages"][0]["role"] == "system" and first["tools"][0]["type"] == "function"
+    tool_msg = ollama.requests[1]["messages"][-1]
+    assert tool_msg["role"] == "tool" and json.loads(tool_msg["content"])["distinct_ports_contacted"] == 29
+    assert json.loads(ollama.requests[2]["messages"][-1]["content"])["risky"] is True
+
+
+def test_ollama_model_choice(monkeypatch):
+    from netmon.agent import OllamaClient
+
+    monkeypatch.delenv("NETMON_OLLAMA_MODEL", raising=False)
+    assert OllamaClient.pick_model(["gemma2:2b", "llama3.2:latest", "qwen2.5:7b"]) == "qwen2.5:7b"
+    assert OllamaClient.pick_model(["gemma2:2b"]) == "gemma2:2b"
+    assert OllamaClient.pick_model([]) is None
+    assert OllamaClient.installed_models("http://127.0.0.1:9") == []  # not running -> empty, no crash
+
+
+def test_offline_answers_common_questions(analyzer, monkeypatch):
+    monkeypatch.setenv("NETMON_PROVIDER", "offline")
+    analyzer.process(PacketInfo(T0 + 41, "192.168.1.99", "192.168.1.1", "TCP", 60, 1, 23, "S"))
+    for i in range(4000):
+        analyzer.process(PacketInfo(T0 + 60 + i * 0.002, "192.168.1.11", "203.0.113.50", "TCP", 1454, 5, 443, "A"))
+    agent = SecurityAnalystAgent(analyzer)
+    threat = agent.ask("Which device is the biggest threat and why?").report
+    assert "**192.168.1.99** is the biggest threat" in threat and "Port scan" in threat
+    upload = agent.ask("Was the upload normal?").report
+    assert "203.0.113.50" in upload and "outside your network" in upload and "Is it normal?" in upload
+    assert "Is it normal?" in agent.ask("Was the upload from 192.168.1.11 normal?").report
+    assert "No unusually large uploads" in agent.ask("Did 192.168.1.10 upload much?").report

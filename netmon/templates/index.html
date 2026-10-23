@@ -121,7 +121,7 @@
   <section class="panel" id="agent">
     <div class="agent-head">
       <h2>AI security analyst</h2>
-      <span class="mode">{% if agent_mode == "ai" %}Agent mode: <b>Claude ({{ model }})</b>{% else %}Agent mode: <b>offline rule-based analyst</b> · set ANTHROPIC_API_KEY to use Claude{% endif %}</span>
+      <span class="mode">Agent: <b>{{ agent_label }}</b>{% if agent_mode != "ai" %} · install Ollama for free AI answers{% endif %}</span>
     </div>
     <div class="agent-controls">
       <button id="investigate">Investigate now</button>
@@ -241,7 +241,7 @@ function markdown(text) {
 async function runAgent(url, body) {
   const out = $("agent-out"), buttons = [$("investigate"), $("ask")];
   buttons.forEach((b) => (b.disabled = true));
-  out.innerHTML = `<p class="steps">The analyst is investigating… this can take up to a minute.</p>`;
+  out.innerHTML = `<p class="steps">The analyst is investigating… this can take up to a minute (longer with a local Ollama model).</p>`;
   try {
     const res = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
     const r = await res.json();

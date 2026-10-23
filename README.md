@@ -25,8 +25,9 @@ ports being contacted (risky ones in red), DNS lookups by domain, and every devi
 
 ## AI security analyst agent
 
-The dashboard has an **AI security analyst**: an agent built on Claude (Anthropic API) that investigates the
-traffic by itself and writes an incident report, or answers questions such as *"Is 192.168.1.12 infected?"*.
+The dashboard has an **AI security analyst**: an agent that investigates the traffic by itself and writes an
+incident report, or answers questions such as *"Is 192.168.1.12 infected?"*. It runs on Claude (Anthropic API)
+or, for free, on a local open model through Ollama.
 
 ![AI analyst](docs/agent.png)
 
@@ -56,16 +57,32 @@ It works as a **tool-using agent loop** (`netmon/agent.py`):
 - **Prompt-injection defence.** Packet contents (DNS names especially) are controlled by whoever sends the
   packets. An attacker could look up a name like `ignore-previous-instructions...`. The system prompt tells the
   model to treat all tool output as untrusted data, and long strings are cut to 120 characters.
-- **Fallback.** Without an API key, or if the API cannot be reached, a built-in **offline rule-based analyst**
+- **Fallback.** Without an AI backend, or if it cannot be reached, a built-in **offline rule-based analyst**
   writes the report from the alerts and playbooks, so the tool always works.
 
-**Turning on Claude**
+**Choosing the AI** - the analyst picks the first one available:
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...          # from https://console.anthropic.com
-export NETMON_MODEL=claude-sonnet-5-5        # optional, this is the default
-python3 -m netmon pcap samples/demo.pcap --speed 5
-```
+| Backend | Cost | How to turn it on |
+| --- | --- | --- |
+| **Ollama** (local open model, e.g. Qwen 2.5) | Free | Install Ollama and download a model (below). Your traffic data never leaves your computer. |
+| **Claude** (Anthropic API) | Paid, a few cents per investigation | `export ANTHROPIC_API_KEY=sk-ant-...` (optional `NETMON_MODEL`) |
+| **Offline analyst** (rules) | Free | Always available. Answers "biggest threat", uploads, DNS, scans and single-IP questions. |
+
+Force one with `NETMON_PROVIDER=ollama`, `claude` or `offline`.
+
+**Free AI with Ollama (Mac, Windows or Linux)**
+
+1. Download and install Ollama from <https://ollama.com/download>, then open it.
+2. Download a model that supports tool calling (one time, a few GB):
+   ```bash
+   ollama pull qwen2.5:7b        # best choice, needs about 8 GB of RAM
+   ollama pull llama3.2:3b       # smaller and faster for 8 GB machines
+   ```
+3. Start the monitor as usual. The dashboard should say **Agent: Ollama - qwen2.5:7b (free, runs on this computer)**.
+   Pick a specific model with `export NETMON_OLLAMA_MODEL=llama3.2:3b`.
+
+Local models are slower than Claude (expect 20 to 90 seconds per investigation on a laptop) and smaller ones
+sometimes call the wrong tool, but the agent loop is the same.
 
 Console only: `python3 -m netmon pcap samples/demo.pcap --no-web --investigate`.
 
@@ -124,7 +141,7 @@ Other options: `--port 5051` to change the dashboard port, `--no-web` for consol
                                                      browser ◄── /api/snapshot (JSON) ◄── Flask (web.py)
                                                         │                                    ▲
                                                         └─► /api/agent ─► AI analyst ─► tools ┘ (read-only)
-                                                                         (agent.py) ◄─► Claude API
+                                                                         (agent.py) ◄─► Claude API or Ollama (local)
 ```
 
 - `netmon/capture.py` reads packets with **scapy** and turns each one into a small `PacketInfo` record
@@ -141,7 +158,7 @@ Other options: `--port 5051` to change the dashboard port, `--no-web` for consol
 python3 -m pytest
 ```
 
-20 tests cover each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary
+23 tests cover each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary
 long domain names), configurable thresholds, an end-to-end run over the sample capture, and the AI agent: the
 tool-calling loop (with a scripted fake Claude client, so no API key is needed), the step limit, the offline
 fallback, bad tool input, clipping of long attacker-controlled strings, and the web endpoints.

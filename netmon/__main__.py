@@ -7,7 +7,8 @@
     python3 -m netmon pcap samples/demo.pcap --no-web --report report.json
     python3 -m netmon pcap samples/demo.pcap --no-web --investigate    AI analyst writes an incident report
 
-The AI analyst uses Claude when ANTHROPIC_API_KEY is set, otherwise a built-in rule-based analyst.
+The AI analyst uses Claude when ANTHROPIC_API_KEY is set, otherwise a free local model through Ollama if it is
+running, otherwise a built-in rule-based analyst.
 """
 
 from __future__ import annotations
@@ -66,7 +67,7 @@ def main(argv=None):
         source = f"file: {args.path}"
         worker = lambda: read_pcap(analyzer, args.path, args.speed, on_alert=print_alert)  # noqa: E731
 
-    print(f"NetZero netmon - watching {source}. Only monitor networks you own or have permission to monitor.")
+    print(f"Network monitor - watching {source}. Only monitor networks you own or have permission to monitor.")
 
     try:
         if args.no_web:
@@ -91,7 +92,7 @@ def main(argv=None):
             from .agent import SecurityAnalystAgent
 
             agent = SecurityAnalystAgent(analyzer)
-            print(f"\n=== AI analyst ({agent.mode} mode) ===")
+            print(f"\n=== AI analyst: {agent.label} ===")
             result = agent.investigate()
             if result.steps:
                 print("Investigation steps: " + " -> ".join(
