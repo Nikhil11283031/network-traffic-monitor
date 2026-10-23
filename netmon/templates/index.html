@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network Monitor</title>
+<style>
+  :root {
+    --bg: #f4f6f8; --panel: #ffffff; --text: #17202a; --muted: #5d6d7e; --line: #e3e8ee;
+    --accent: #1f6feb; --high: #c62828; --medium: #b26a00; --low: #00838f; --info: #607d8b;
+    --high-bg: #fdecea; --medium-bg: #fff4e0; --low-bg: #e0f4f5; --info-bg: #eceff1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1419; --panel: #182029; --text: #e6edf3; --muted: #8b98a5; --line: #2a3541;
+      --accent: #58a6ff; --high: #ff6b6b; --medium: #f0b44c; --low: #4dd0e1; --info: #90a4ae;
+      --high-bg: #3a1d1d; --medium-bg: #3a2e14; --low-bg: #12323a; --info-bg: #222c35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+           padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { margin: 0; font-size: 20px; }
+  .source { color: var(--muted); font-size: 13px; }
+  .live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2ea043;
+          margin-right: 6px; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  main { padding: 20px 16px; display: grid; gap: 16px; max-width: 1400px; margin: 0 auto; grid-template-columns: minmax(0, 1fr); }
+  main > *, .grid2 > *, .grid3 > * { min-width: 0; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .card .value { font-size: 26px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card.alerting .value { color: var(--high); }
+  .grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+  h2 { margin: 0 0 10px; font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .sev { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 700;
+         text-transform: uppercase; }
+  .sev.high { color: var(--high); background: var(--high-bg); }
+  .sev.medium { color: var(--medium); background: var(--medium-bg); }
+  .sev.low { color: var(--low); background: var(--low-bg); }
+  .sev.info { color: var(--info); background: var(--info-bg); }
+  .alerts { max-height: 360px; overflow-y: auto; }
+  .empty { color: var(--muted); padding: 10px 0; }
+  .bars div { display: grid; grid-template-columns: 70px 1fr 60px; gap: 8px; align-items: center; margin: 6px 0; }
+  .bar { height: 10px; border-radius: 5px; background: var(--accent); min-width: 2px; }
+  .risky { color: var(--high); font-weight: 600; }
+  svg text { fill: var(--muted); font-size: 11px; }
+  .table-wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Network Traffic Monitor</h1>
+    <div class="source"><span class="live"></span>{{ source }}</div>
+  </div>
+  <div class="source" id="updated">Waiting for traffic…</div>
+</header>
+<main>
+  <section class="cards">
+    <div class="card"><div class="label">Packets</div><div class="value" id="c-packets">0</div></div>
+    <div class="card"><div class="label">Data</div><div class="value" id="c-bytes">0 B</div></div>
+    <div class="card"><div class="label">Local devices</div><div class="value" id="c-devices">0</div></div>
+    <div class="card" id="card-high"><div class="label">High alerts</div><div class="value" id="c-high">0</div></div>
+    <div class="card"><div class="label">All alerts</div><div class="value" id="c-alerts">0</div></div>
+  </section>
+
+  <section class="grid2">
+    <div class="panel">
+      <h2>Packets per second (last 60 s)</h2>
+      <svg id="chart" viewBox="0 0 600 180" width="100%" height="180" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="panel">
+      <h2>Protocols</h2>
+      <div class="bars" id="protocols"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Alerts</h2>
+    <div class="alerts table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Severity</th><th>Type</th><th>Details</th></tr></thead>
+        <tbody id="alerts"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="grid3">
+    <div class="panel table-wrap">
+      <h2>Top talkers</h2>
+      <table><thead><tr><th>Host</th><th class="num">Sent</th><th class="num">Received</th></tr></thead>
+        <tbody id="talkers"></tbody></table>
+    </div>
+    <div class="panel table-wrap">
+      <h2>Ports contacted</h2>
+      <table><thead><tr><th>Port</th><th class="num">Connections</th></tr></thead>
+        <tbody id="ports"></tbody></table>
+    </div>
+    <div class="panel table-wrap">
+      <h2>DNS lookups</h2>
+      <table><thead><tr><th>Domain</th><th class="num">Lookups</th></tr></thead>
+        <tbody id="dns"></tbody></table>
+    </div>
+  </section>
+
+  <section class="panel table-wrap">
+    <h2>Devices on the local network</h2>
+    <table><thead><tr><th>IP address</th><th>MAC address</th><th>First seen</th><th>Last seen</th>
+      <th class="num">Packets</th></tr></thead>
+      <tbody id="devices"></tbody></table>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const time = (ts) => new Date(ts * 1000).toLocaleTimeString();
+const size = (b) => b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : b >= 1e6 ? (b / 1e6).toFixed(1) + " MB"
+  : b >= 1e3 ? (b / 1e3).toFixed(1) + " KB" : b + " B";
+const PORT_NAMES = {21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 80: "HTTP", 123: "NTP",
+  443: "HTTPS", 445: "SMB", 1433: "MS SQL", 3389: "RDP", 4444: "Backdoor", 5353: "mDNS", 5900: "VNC", 6667: "IRC"};
+const rows = (id, items, render, empty) => {
+  $(id).innerHTML = items.length ? items.map(render).join("") : `<tr><td colspan="5" class="empty">${empty}</td></tr>`;
+};
+
+function drawChart(points) {
+  const svg = $("chart"), W = 600, H = 180, pad = 22;
+  if (!points.length) { svg.innerHTML = ""; return; }
+  const max = Math.max(1, ...points.map((p) => p.packets));
+  const bw = (W - pad) / points.length;
+  let out = `<text x="0" y="12">${max}</text><text x="0" y="${H - 4}">0</text>`;
+  points.forEach((p, i) => {
+    const h = (p.packets / max) * (H - 20);
+    out += `<rect x="${pad + i * bw}" y="${H - 6 - h}" width="${Math.max(1, bw - 1)}" height="${h}"
+      rx="1" fill="var(--accent)"><title>${time(p.t)}: ${p.packets} packets, ${size(p.bytes)}</title></rect>`;
+  });
+  svg.innerHTML = out;
+}
+
+async function refresh() {
+  let s;
+  try { s = await (await fetch("/api/snapshot")).json(); } catch { return; }
+  const counts = s.alert_counts || {};
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  $("c-packets").textContent = s.packets.toLocaleString();
+  $("c-bytes").textContent = size(s.bytes);
+  $("c-devices").textContent = s.devices.length;
+  $("c-high").textContent = counts.high || 0;
+  $("card-high").classList.toggle("alerting", !!counts.high);
+  $("c-alerts").textContent = total;
+  if (s.last_ts) $("updated").textContent = `Latest packet ${time(s.last_ts)} · ${Math.round(s.duration)} s watched`;
+
+  drawChart(s.timeline);
+  const pmax = Math.max(1, ...Object.values(s.protocols));
+  $("protocols").innerHTML = Object.entries(s.protocols).map(([k, v]) =>
+    `<div><span>${esc(k)}</span><span class="bar" style="width:${(v / pmax) * 100}%"></span>
+     <span class="num">${v.toLocaleString()}</span></div>`).join("") || `<p class="empty">No traffic yet.</p>`;
+
+  rows("alerts", s.alerts, (a) => `<tr><td class="num">${time(a.ts)}</td>
+    <td><span class="sev ${a.severity}">${a.severity}</span></td><td>${esc(a.kind)}</td><td>${esc(a.message)}</td></tr>`,
+    "No suspicious activity detected.");
+  rows("talkers", s.top_talkers, (t) => `<tr><td><code>${esc(t.host)}</code></td>
+    <td class="num">${size(t.sent)}</td><td class="num">${size(t.received)}</td></tr>`, "No traffic yet.");
+  rows("ports", s.top_ports, (p) => `<tr><td class="${p.risky ? "risky" : ""}">${p.port}
+    ${PORT_NAMES[p.port] ? "· " + PORT_NAMES[p.port] : ""}${p.risky ? " ⚠" : ""}</td>
+    <td class="num">${p.count.toLocaleString()}</td></tr>`, "No connections yet.");
+  rows("dns", s.dns, (d) => `<tr><td><code>${esc(d.domain)}</code></td><td class="num">${d.count}</td></tr>`,
+    "No DNS lookups yet.");
+  rows("devices", s.devices, (d) => `<tr><td><code>${esc(d.ip)}</code></td><td><code>${esc(d.mac || "-")}</code></td>
+    <td>${time(d.first_seen)}</td><td>${time(d.last_seen)}</td><td class="num">${d.packets.toLocaleString()}</td></tr>`,
+    "No local devices seen yet.");
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
