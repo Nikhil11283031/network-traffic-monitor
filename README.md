@@ -1,8 +1,23 @@
 # Network Traffic Monitor
 
-A Python tool that watches network traffic, detects suspicious activity and shows it on a live web dashboard.
-It can capture live traffic from your own computer's network interface or analyse a saved `.pcap` capture file
-(for example one recorded with Wireshark).
+[![tests](https://github.com/Nikhil11283031/network-traffic-monitor/actions/workflows/tests.yml/badge.svg)](https://github.com/Nikhil11283031/network-traffic-monitor/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
+![MITRE ATT&CK](https://img.shields.io/badge/MITRE-ATT%26CK%20mapped-red)
+![Docker](https://img.shields.io/badge/docker-ready-2496ED)
+
+A Python network intrusion-detection tool. It watches network traffic, detects suspicious activity with
+rules, **threat-intelligence blocklists** and **machine learning**, tags every finding with its **MITRE ATT&CK**
+technique, and shows it all on a live web dashboard with an **AI security analyst**. It can capture live traffic
+from your own computer or analyse a saved `.pcap` capture file (for example one recorded with Wireshark).
+
+**Highlights**
+
+- Six rule-based detectors (port scan, SYN flood, risky ports, data exfiltration, DNS tunnelling, new devices)
+- Threat intelligence from free public blocklists (abuse.ch Feodo Tracker and URLhaus, Spamhaus DROP)
+- Unsupervised ML anomaly detection (Isolation Forest) that learns your network's normal behaviour
+- MITRE ATT&CK technique on every alert, linked to the official description
+- AI analyst agent (Claude, or free and local with Ollama) with a verification safety check
+- 37 automated tests, GitHub Actions CI and a Docker image
 
 ![Dashboard](docs/dashboard.png)
 
@@ -16,12 +31,71 @@ It can capture live traffic from your own computer's network interface or analys
 | **High traffic** | Medium | One host sends 5 MB+ within 10 seconds - a large upload could be data being stolen. |
 | **Suspicious DNS** | Medium | A DNS lookup with a very long (40+ characters) or random-looking name, measured with Shannon entropy. Malware uses this to hide data in DNS (DNS tunnelling) or to find its servers. |
 | **New device** | Low | A device that was not on the local network during the first 30 seconds appears. |
+| **Threat intel** | High | A device talks to, or looks up, an IP address or domain on a threat-intelligence blocklist. |
+| **Anomaly (ML)** | Medium | The machine-learning model finds a device behaving unlike anything it learned as normal. |
 
 Repeated alerts for the same thing are grouped (one alert per minute), so the list stays readable. All limits
 are in `Config` in `netmon/analyzer.py` and can be changed.
 
 The dashboard also shows packets per second, protocols, the hosts sending and receiving the most data, the
 ports being contacted (risky ones in red), DNS lookups by domain, and every device seen on the local network.
+
+## MITRE ATT&CK mapping
+
+[MITRE ATT&CK](https://attack.mitre.org) is the security industry's shared catalogue of attacker techniques.
+Every alert is tagged with the matching technique, shown as a link on the dashboard and given to the AI analyst
+(`netmon/mitre.py`):
+
+| Alert | Technique | Tactic |
+| --- | --- | --- |
+| Port scan | T1046 Network Service Discovery | Discovery |
+| SYN flood | T1498.001 Direct Network Flood | Impact |
+| Risky port | T1021 Remote Services (RDP T1021.001, SMB T1021.002, VNC T1021.005), T1071.002 File Transfer Protocols, T1571 Non-Standard Port | Lateral Movement / Command and Control |
+| High traffic | T1048 Exfiltration Over Alternative Protocol, T1041 Exfiltration Over C2 Channel | Exfiltration |
+| Suspicious DNS | T1071.004 DNS, T1568.002 Domain Generation Algorithms | Command and Control |
+| New device | T1200 Hardware Additions | Initial Access |
+| Threat intel | T1071 Application Layer Protocol | Command and Control |
+
+The mapping is the best match for what can be seen in traffic, not proof that the technique was used.
+
+## Threat intelligence
+
+Security researchers publish free lists of servers known to run malware, botnets or criminal networks. Traffic
+to any of them is a strong warning sign, so it raises a **high** alert (`netmon/threatintel.py`).
+
+```bash
+python3 -m netmon update-intel      # downloads the free feeds into intel/
+```
+
+| Feed | What it lists |
+| --- | --- |
+| abuse.ch **Feodo Tracker** | Botnet command-and-control server IPs |
+| **Spamhaus DROP** | Hijacked and criminal IP ranges |
+| abuse.ch **URLhaus** | Domains spreading malware |
+
+Lists are plain text files in `intel/` (IP addresses, CIDR ranges, domains, hosts-file lines or Spamhaus JSON
+lines), so you can add your own. `intel/demo.txt` lists the documentation-only addresses used by the demo
+capture. Re-run `update-intel` regularly; the lists change daily. Use `--intel DIR` or `--no-intel` to change
+or turn off the check.
+
+## Machine-learning anomaly detection
+
+Rules only catch what someone thought of in advance. The ML detector **learns what normal looks like** on
+your network and flags behaviour that does not fit (`netmon/ml.py`):
+
+1. Traffic is cut into 5-second windows. For each active local device a feature vector is built: packets and
+   kilobytes sent, number of different hosts and ports contacted, connection attempts, DNS lookups, and the
+   longest and most random DNS name.
+2. **Learning phase:** the first 40 seconds of a capture file (5 minutes for live traffic, `--ml-learn` to
+   change) are treated as normal.
+3. An **Isolation Forest** (scikit-learn) is trained on those windows. It isolates unusual points with few
+   random splits, giving them a low anomaly score. It is **unsupervised**: no labelled attack data is needed.
+4. Each later window is scored. An alert needs a low score **and** at least one feature at least double the
+   highest normal value, so every alert says why: *"contacted 96 different ports (normal: up to 2)"*. This
+   second check keeps false alarms down, which matters because the model learns from little data.
+
+On the demo capture it flags the intruder, the phone's upload and the TV's DNS leak, and never the normal
+laptop. The dashboard shows whether it is still learning or active. Turn it off with `--no-ml`.
 
 ## AI security analyst agent
 
@@ -36,7 +110,7 @@ It works as a **tool-using agent loop** (`netmon/agent.py`):
 1. The agent receives the request and a list of tools it may call.
 2. Claude decides which tool it needs and the program runs it, for example `get_overview`, then
    `get_host_activity("192.168.1.99")`, then `get_response_playbook("Port scan")`.
-3. The result goes back to Claude, which decides on the next step. This repeats (up to 10 rounds) until it has
+3. The result goes back to Claude, which decides on the next step. This repeats (up to 6 rounds) until it has
    enough evidence.
 4. It writes a report: summary and risk level, one section per incident with evidence, the likely explanation
    (including innocent ones) and recommended actions. The dashboard shows each tool call it made.
@@ -129,7 +203,18 @@ python3 -m netmon pcap mycapture.pcap                # instant analysis + dashbo
 python3 -m netmon pcap mycapture.pcap --no-web --report report.json   # console only, save a JSON report
 ```
 
-Other options: `--port 5051` to change the dashboard port, `--no-web` for console-only output.
+Other options: `--port 5051` to change the dashboard port, `--no-web` for console-only output,
+`--no-intel`, `--no-ml`, `--ml-learn SECONDS`.
+
+**4. With Docker**
+
+```bash
+docker compose up            # builds the image and replays the demo; open http://127.0.0.1:5050
+```
+
+The container uses Ollama on your computer for the AI analyst if it is running, and reads threat-intelligence
+lists from the `intel/` folder. Docker is intended for the demo and for capture files: on macOS and Windows,
+Docker runs inside a virtual machine, so live capture in a container only sees the VM's traffic.
 
 ## How it works
 
@@ -149,16 +234,22 @@ Other options: `--port 5051` to change the dashboard port, `--no-web` for consol
 - `netmon/analyzer.py` keeps running statistics and applies the detection rules using **sliding time windows**
   based on each packet's own timestamp, so a saved capture gives exactly the same results as watching live.
 - `netmon/web.py` serves the dashboard; the page asks for a fresh snapshot every two seconds.
+- `netmon/mitre.py` maps alerts to MITRE ATT&CK; `netmon/threatintel.py` loads and matches blocklists;
+  `netmon/ml.py` is the Isolation Forest anomaly detector.
 - `netmon/agent.py` is the AI analyst; it reads the same analyser through read-only tools.
 - Capture runs in a background thread; a lock keeps the statistics consistent while the dashboard reads them.
 
-## Tests
+## Tests and CI
 
 ```bash
 python3 -m pytest
 ```
 
-23 tests cover each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary
+GitHub Actions (`.github/workflows/tests.yml`) runs the tests on Python 3.10, 3.11 and 3.12 on every push, runs
+the demo, and builds and runs the Docker image. The badge at the top shows the result.
+
+37 tests cover MITRE tagging, every threat-intelligence feed format and the feed download, the ML detector
+(learning, flagging only unusual behaviour, the demo capture, running without scikit-learn), and each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary
 long domain names), configurable thresholds, an end-to-end run over the sample capture, and the AI agent: the
 tool-calling loop (with a scripted fake Claude client, so no API key is needed), the step limit, the offline
 fallback, bad tool input, clipping of long attacker-controlled strings, and the web endpoints.
@@ -166,9 +257,11 @@ fallback, bad tool input, clipping of long attacker-controlled strings, and the 
 ## Limitations and ideas
 
 - Encrypted traffic (HTTPS) is not decrypted; the monitor looks at who talks to whom, how much and when.
-- Rules are thresholds, so a slow scan spread over minutes is not caught; a learning baseline per device
-  would be a good next step.
-- Alerts could be sent by email or Slack, or saved to a database for history.
+- Rules are thresholds, so a slow scan spread over minutes is not caught. The ML detector helps, but it
+  only knows what it saw while learning; if an attack is already happening then, it is learned as normal.
+- Blocklists only know about servers that have already been reported.
+- Ideas: save alerts to a database for history, send notifications (email, Slack, phone), run at startup as a
+  service, export alerts to a SIEM (Splunk, Elastic), expose the tools to other AI apps as an MCP server.
 
 ## Ethics
 

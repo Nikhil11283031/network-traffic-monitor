@@ -54,6 +54,13 @@
   .bars div { display: grid; grid-template-columns: 70px 1fr 60px; gap: 8px; align-items: center; margin: 6px 0; }
   .bar { height: 10px; border-radius: 5px; background: var(--accent); min-width: 2px; }
   .risky { color: var(--high); font-weight: 600; }
+  .mitre { display: inline-block; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 6px;
+           margin: 1px 2px 1px 0; border-radius: 4px; border: 1px solid var(--line); color: var(--accent);
+           text-decoration: none; white-space: nowrap; }
+  .mitre:hover { border-color: var(--accent); }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .chip { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 12px; padding: 2px 10px; }
+  .chip b { color: var(--text); font-weight: 600; }
   svg text { fill: var(--muted); font-size: 11px; }
   .table-wrap { overflow-x: auto; }
   .agent-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -86,7 +93,10 @@
     <h1>Network Traffic Monitor</h1>
     <div class="source"><span class="live"></span>{{ source }}</div>
   </div>
-  <div class="source" id="updated">Waiting for traffic…</div>
+  <div>
+    <div class="source" id="updated">Waiting for traffic…</div>
+    <div class="chips" id="chips"></div>
+  </div>
 </header>
 <main>
   <section class="cards">
@@ -112,7 +122,7 @@
     <h2>Alerts</h2>
     <div class="alerts table-wrap">
       <table>
-        <thead><tr><th>Time</th><th>Severity</th><th>Type</th><th>Details</th></tr></thead>
+        <thead><tr><th>Time</th><th>Severity</th><th>Type</th><th>Details</th><th>MITRE ATT&amp;CK</th></tr></thead>
         <tbody id="alerts"></tbody>
       </table>
     </div>
@@ -207,8 +217,15 @@ async function refresh() {
      <span class="num">${v.toLocaleString()}</span></div>`).join("") || `<p class="empty">No traffic yet.</p>`;
 
   rows("alerts", s.alerts, (a) => `<tr><td class="num">${time(a.ts)}</td>
-    <td><span class="sev ${a.severity}">${a.severity}</span></td><td>${esc(a.kind)}</td><td>${esc(a.message)}</td></tr>`,
+    <td><span class="sev ${a.severity}">${a.severity}</span></td><td>${esc(a.kind)}</td><td>${esc(a.message)}</td>
+    <td>${(a.mitre || []).map((m) => `<a class="mitre" href="${esc(m.url)}" target="_blank" rel="noopener"
+      title="${esc(m.name)} - ${esc(m.tactic)}">${esc(m.id)}</a>`).join("") || '<span style="color:var(--muted)">-</span>'}</td></tr>`,
     "No suspicious activity detected.");
+  const chips = [];
+  if (s.intel) chips.push(`Threat intel: <b>${s.intel.indicators.toLocaleString()}</b> indicators`);
+  if (s.ml) chips.push(s.ml.state === "unavailable" ? `ML: <b>off</b>`
+    : s.ml.state === "learning" ? `ML: <b>learning normal behaviour…</b>` : `ML: <b>active</b> (trained on ${s.ml.trained_on})`);
+  $("chips").innerHTML = chips.map((c) => `<span class="chip">${c}</span>`).join("");
   rows("talkers", s.top_talkers, (t) => `<tr><td><code>${esc(t.host)}</code></td>
     <td class="num">${size(t.sent)}</td><td class="num">${size(t.received)}</td></tr>`, "No traffic yet.");
   rows("ports", s.top_ports, (p) => `<tr><td class="${p.risky ? "risky" : ""}">${p.port}

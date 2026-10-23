@@ -13,6 +13,8 @@ import threading
 from collections import Counter, defaultdict, deque
 from dataclasses import asdict, dataclass, field
 
+from .mitre import techniques_for
+
 # Ports that are commonly abused or should not normally be used on a home or office network.
 RISKY_PORTS = {
     21: "FTP (unencrypted file transfer)",
@@ -66,6 +68,7 @@ class Alert:
     source: str
     target: str
     message: str
+    mitre: list = field(default_factory=list)  # MITRE ATT&CK techniques, see mitre.py
 
 
 def shannon_entropy(text: str) -> float:
@@ -115,8 +118,10 @@ class _Window:
 
 
 class Analyzer:
-    def __init__(self, config: Config | None = None):
+    def __init__(self, config: Config | None = None, intel=None, ml=None):
         self.config = config or Config()
+        self.intel = intel  # ThreatIntel blocklists (optional)
+        self.ml = ml  # AnomalyDetector (optional)
         self.lock = threading.Lock()
         self.first_ts: float | None = None
         self.last_ts: float | None = None
@@ -163,6 +168,11 @@ class Analyzer:
                 del self.timeline[old]
 
         self._track_device(p, new_alerts)
+        if self.intel is not None:
+            self._check_intel(p, new_alerts)
+        if self.ml is not None:
+            for anomaly in self.ml.observe(p):
+                self._ml_alert(anomaly, new_alerts)
         self.host_peers[p.src][p.dst] += p.length
 
         is_syn = p.proto == "TCP" and "S" in p.flags and "A" not in p.flags
@@ -194,7 +204,7 @@ class Analyzer:
         # Risky or unusual services.
         if p.dport in RISKY_PORTS and starts_conversation:
             self._alert(new_alerts, p.ts, "medium", "Risky port", p.src, f"{p.dst}:{p.dport}",
-                        f"{p.src} connected to {p.dst} on port {p.dport} - {RISKY_PORTS[p.dport]}.")
+                        f"{p.src} connected to {p.dst} on port {p.dport} - {RISKY_PORTS[p.dport]}.", port=p.dport)
 
         # Heavy talker: one host sending a lot of data quickly (large upload, possible data theft).
         window = self._volume[p.src]
@@ -223,6 +233,37 @@ class Analyzer:
                             f"entropy {entropy:.1f}) under {base}. This can be DNS tunnelling or malware.")
         return new_alerts
 
+    def _ml_alert(self, a: dict, new_alerts: list[Alert]):
+        self._alert(new_alerts, a["ts"], "medium", "Anomaly (ML)", a["host"], "behaviour",
+                    f"Machine learning flagged {a['host']} as unusual (anomaly score {a['score']}): "
+                    + "; ".join(a["reasons"]) + ".")
+
+    def finish(self) -> list[Alert]:
+        """Call when a capture file ends, so the last time window is analysed too."""
+        new_alerts: list[Alert] = []
+        if self.ml is not None:
+            with self.lock:
+                for anomaly in self.ml.flush():
+                    self._ml_alert(anomaly, new_alerts)
+        return new_alerts
+
+    def _check_intel(self, p: PacketInfo, new_alerts: list[Alert]):
+        """Traffic to or from an address on a threat-intelligence blocklist, or a lookup of a listed domain."""
+        for remote, local, direction in ((p.dst, p.src, "sent traffic to"), (p.src, p.dst, "received traffic from")):
+            if is_local(remote):
+                continue
+            listed = self.intel.match_ip(remote)
+            if listed:
+                self._alert(new_alerts, p.ts, "high", "Threat intel", local, remote,
+                            f"{local} {direction} {remote}, which is on the blocklist "
+                            f"\"{listed}\".")
+        if p.dns_query:
+            hit = self.intel.match_domain(p.dns_query)
+            if hit:
+                domain, listed = hit
+                self._alert(new_alerts, p.ts, "high", "Threat intel", p.src, domain,
+                            f"{p.src} looked up {domain}, which is on the blocklist \"{listed}\".")
+
     def _track_device(self, p: PacketInfo, new_alerts: list[Alert]):
         if not is_local(p.src):
             return
@@ -239,13 +280,13 @@ class Analyzer:
         if p.src_mac and not device["mac"]:
             device["mac"] = p.src_mac
 
-    def _alert(self, new_alerts, ts, severity, kind, source, target, message):
+    def _alert(self, new_alerts, ts, severity, kind, source, target, message, port=None):
         key = (kind, source, target)
         last = self._last_alert.get(key)
         if last is not None and ts - last < self.config.alert_cooldown:
             return
         self._last_alert[key] = ts
-        alert = Alert(ts, severity, kind, source, target, message)
+        alert = Alert(ts, severity, kind, source, target, message, techniques_for(kind, port))
         self.alerts.append(alert)
         new_alerts.append(alert)
 
@@ -292,5 +333,7 @@ class Analyzer:
                 "dns": [{"domain": d, "count": n} for d, n in self.dns_domains.most_common(8)],
                 "devices": sorted(self.devices.values(), key=lambda d: d["first_seen"]),
                 "alert_counts": dict(Counter(a.severity for a in self.alerts)),
+                "intel": self.intel.summary() if self.intel is not None else None,
+                "ml": self.ml.status() if self.ml is not None else None,
                 "alerts": [asdict(a) for a in alerts],
             }

@@ -1,0 +1,15 @@
+# docker compose up   ->  dashboard on http://127.0.0.1:5050 replaying the demo capture.
+services:
+  netmon:
+    build: .
+    ports:
+      - "127.0.0.1:5050:5050"   # only reachable from this computer
+    environment:
+      # Use Ollama running on the host computer for the free AI analyst (if it is running).
+      OLLAMA_HOST: http://host.docker.internal:11434
+      # Uncomment to use Claude instead:
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./intel:/app/intel:ro    # threat-intelligence lists from this folder

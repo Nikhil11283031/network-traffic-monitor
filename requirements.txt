@@ -1,4 +1,6 @@
 scapy>=2.5
 flask>=3.0
+scikit-learn>=1.3
+certifi
 anthropic>=0.40
 pytest>=8.0

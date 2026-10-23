@@ -1,0 +1,5 @@
+# name: Demo blocklist (for samples/demo.pcap)
+# These are documentation-only addresses used by the simulated demo traffic, not real threats.
+# Run "python3 -m netmon update-intel" to download real, free blocklists into this folder.
+203.0.113.50
+cdn-sync.example

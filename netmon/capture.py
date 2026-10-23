@@ -68,3 +68,6 @@ def read_pcap(analyzer: Analyzer, path: str, speed: float = 0, on_alert=None):
                     time.sleep(min((now - previous) / speed, 2.0))
                 previous = now
             _handle(analyzer, pkt, on_alert)
+    for alert in analyzer.finish():
+        if on_alert:
+            on_alert(alert)
