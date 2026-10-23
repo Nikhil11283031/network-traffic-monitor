@@ -25,7 +25,6 @@ import os
 import platform
 import random
 import shutil
-import signal
 import socket
 import string
 import struct
@@ -46,6 +45,11 @@ def own_address() -> str:
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def running(pid: str) -> bool:
+    """Whether a process is still alive (ps works for root-owned processes too)."""
+    return subprocess.run(["ps", "-p", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
 def say(text: str):
@@ -143,15 +147,20 @@ def main(argv=None):
     print(f"Safe attack lab: recording {args.iface} for about {total // 60} min {total % 60} s. Target: this "
           f"computer only ({ip}).\nNothing is sent to other devices or the internet.\n")
 
-    cmd = ["tcpdump", "-i", args.iface, "-n", "-U", "-s", "256", "-w", str(pcap)]
+    # tcpdump is started in the background by a short-lived shell, so sudo exits at once. (If sudo stayed running
+    # in front, it would switch the Terminal to raw mode and every printed line would drift to the right.)
+    log = out / "tcpdump.log"
+    shell = f"tcpdump -i {args.iface} -n -U -s 256 -w '{pcap}' >/dev/null 2>'{log}' & echo $!"
+    prefix = []
     if not args.no_sudo and os.geteuid() != 0:
         print("tcpdump needs administrator rights to record - enter your Mac password if asked.")
         subprocess.run(["sudo", "-v"], check=True)  # ask for the password now, not in the middle of the lab
-        cmd = ["sudo"] + cmd
-    recorder = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        prefix = ["sudo"]
+    started = subprocess.run(prefix + ["sh", "-c", shell], capture_output=True, text=True)
+    pid = started.stdout.strip()
     time.sleep(2)
-    if recorder.poll() is not None:
-        sys.exit("tcpdump could not start: " + recorder.stderr.read().decode(errors="replace"))
+    if not pid.isdigit() or not running(pid):
+        sys.exit("tcpdump could not start: " + (log.read_text(errors="replace") if log.exists() else started.stderr))
 
     episodes = []
     try:
@@ -168,13 +177,13 @@ def main(argv=None):
             time.sleep(args.gap)
     finally:
         time.sleep(2)
-        recorder.send_signal(signal.SIGINT)  # sudo passes this on to tcpdump, which then saves the file
-        try:
-            recorder.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            recorder.terminate()
-    if os.geteuid() != 0 and not args.no_sudo and pcap.exists():
-        subprocess.run(["sudo", "chown", f"{os.getuid()}:{os.getgid()}", str(pcap)], check=False)
+        subprocess.run(prefix + ["kill", "-INT", pid], check=False)  # tcpdump saves the file and exits
+        for _ in range(50):
+            if not running(pid):
+                break
+            time.sleep(0.2)
+    if prefix and pcap.exists():
+        subprocess.run(["sudo", "chown", f"{os.getuid()}:{os.getgid()}", str(pcap), str(log)], check=False)
 
     truth = {"description": f"Self lab on {platform.node()} ({ip}), interface {args.iface}. Every attack targeted "
                             "this computer only.", "episodes": episodes}

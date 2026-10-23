@@ -385,7 +385,10 @@ not at the contents.
 **Running it on CIC-IDS2017**
 
 1. Download the PCAPs from the dataset's download page (linked from the CIC page above). Each day is one large file
-   (roughly 8 to 13 GB).
+   (roughly 8 to 13 GB). If that site is blocked for you, an unofficial mirror is on Hugging Face
+   ([bencorn/CICIDS2017](https://huggingface.co/datasets/bencorn/CICIDS2017)), for example
+   `curl -L -C - -o Friday-WorkingHours.pcap https://huggingface.co/datasets/bencorn/CICIDS2017/resolve/main/Friday-WorkingHours.pcap`
+   (`-C -` resumes an interrupted download).
 2. Run one day at a time, for example
    `python3 -m netmon benchmark Tuesday-WorkingHours.pcap --truth cicids2017-tuesday`.
    The fast reader (`dpkt`) processes about 20,000 to 30,000 packets per second on a laptop, so a day takes
