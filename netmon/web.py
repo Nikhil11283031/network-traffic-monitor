@@ -1,5 +1,6 @@
 """The dashboard: one page, a JSON endpoint it polls every two seconds, and the AI analyst endpoints."""
 
+import time
 from dataclasses import asdict
 
 from flask import Flask, jsonify, render_template, request
@@ -23,6 +24,12 @@ def create_app(analyzer: Analyzer, source: str, agent: SecurityAnalystAgent | No
     @app.post("/api/agent/investigate")
     def investigate():
         return jsonify(asdict(agent.investigate()))
+
+    @app.get("/api/agent/progress")
+    def progress():
+        p = dict(agent.progress)
+        p["elapsed"] = round(time.time() - p["started"]) if p.get("started") else 0
+        return jsonify(p)
 
     @app.post("/api/agent/ask")
     def ask():

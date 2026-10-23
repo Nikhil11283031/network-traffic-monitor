@@ -241,7 +241,16 @@ function markdown(text) {
 async function runAgent(url, body) {
   const out = $("agent-out"), buttons = [$("investigate"), $("ask")];
   buttons.forEach((b) => (b.disabled = true));
-  out.innerHTML = `<p class="steps">The analyst is investigating… this can take up to a minute (longer with a local Ollama model).</p>`;
+  out.innerHTML = `<p class="steps" id="agent-progress">The analyst is starting…</p>`;
+  const timer = setInterval(async () => {
+    try {
+      const p = await (await fetch("/api/agent/progress")).json();
+      const el = $("agent-progress");
+      if (!el || !p.running) return;
+      const steps = p.steps.map((s) => `<code>${esc(s.tool)}${Object.keys(s.input).length ? "(" + esc(Object.values(s.input).join(", ")) + ")" : ""}</code>`).join(" → ");
+      el.innerHTML = `Working for ${p.elapsed} s · ${esc(p.phase)}` + (steps ? `<br>Steps so far: ${steps}` : "");
+    } catch {}
+  }, 1500);
   try {
     const res = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
     const r = await res.json();
@@ -252,6 +261,7 @@ async function runAgent(url, body) {
   } catch (e) {
     out.innerHTML = `<p class="note">Error: ${esc(e.message)}</p>`;
   } finally {
+    clearInterval(timer);
     buttons.forEach((b) => (b.disabled = false));
   }
 }

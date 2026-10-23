@@ -178,3 +178,16 @@ def test_offline_answers_common_questions(analyzer, monkeypatch):
     assert "203.0.113.50" in upload and "outside your network" in upload and "Is it normal?" in upload
     assert "Is it normal?" in agent.ask("Was the upload from 192.168.1.11 normal?").report
     assert "No unusually large uploads" in agent.ask("Did 192.168.1.10 upload much?").report
+
+
+def test_progress_is_reported(analyzer):
+    seen = []
+    ollama = FakeOllama([
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "get_overview", "arguments": {}}}]},
+        {"role": "assistant", "content": "Done."},
+    ])
+    agent = SecurityAnalystAgent(analyzer, ollama=ollama)
+    agent.on_progress = seen.append
+    agent.investigate()
+    assert seen[0].startswith("Thinking (round 1)") and "Step 1: get_overview()" in seen
+    assert agent.progress["running"] is False and len(agent.progress["steps"]) == 1

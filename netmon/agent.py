@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -27,7 +28,7 @@ from datetime import datetime
 from .analyzer import RISKY_PORTS, Analyzer
 
 DEFAULT_MODEL = os.environ.get("NETMON_MODEL", "claude-sonnet-5-5")
-MAX_STEPS = 10
+MAX_STEPS = 6
 
 COMMON_PORTS = {
     20: "FTP data", 21: "FTP", 22: "SSH (encrypted remote login)", 23: "Telnet", 25: "SMTP (email sending)",
@@ -272,7 +273,8 @@ class OllamaClient:
         return models[0] if models else None
 
     def chat(self, messages: list, tools: list | None) -> dict:
-        body = {"model": self.model, "messages": messages, "stream": False, "options": {"temperature": 0.2}}
+        body = {"model": self.model, "messages": messages, "stream": False, "options": {"temperature": 0.2, "num_ctx": 16384,
+                                                                                     "num_predict": 1500}}
         if tools:
             body["tools"] = tools
         req = urllib.request.Request(self.base_url + "/api/chat", data=json.dumps(body).encode(),
@@ -297,6 +299,8 @@ class SecurityAnalystAgent:
         self.max_steps = max_steps
         self.client = client
         self.ollama = ollama
+        self.on_progress = None  # optional callback(text), e.g. print, to follow the investigation live
+        self.progress = {"running": False, "started": None, "phase": "", "steps": []}
         choice = os.environ.get("NETMON_PROVIDER", "auto").lower()
 
         if self.client is None and self.ollama is None:
@@ -336,7 +340,24 @@ class SecurityAnalystAgent:
     def ask(self, question: str) -> AgentResult:
         return self._run(question.strip()[:1000])
 
+    def _phase(self, text: str):
+        self.progress["phase"] = text
+        if self.on_progress:
+            self.on_progress(text)
+
+    def _step(self, steps: list, tool: str, args: dict):
+        steps.append({"tool": tool, "input": args})
+        self.progress["steps"] = list(steps)
+        self._phase(f"Step {len(steps)}: {tool}(" + ", ".join(map(str, args.values())) + ")")
+
     def _run(self, request: str) -> AgentResult:
+        self.progress = {"running": True, "started": time.time(), "phase": "Starting", "steps": []}
+        try:
+            return self._run_inner(request)
+        finally:
+            self.progress["running"] = False
+
+    def _run_inner(self, request: str) -> AgentResult:
         if self.provider == "offline":
             return OfflineAnalyst(self.analyzer).answer(
                 request, note="AI mode is off, so the built-in rule-based analyst answered. For free AI answers, "
@@ -355,7 +376,8 @@ class SecurityAnalystAgent:
 
     def _run_claude(self, request: str, steps: list) -> AgentResult:
         messages = [{"role": "user", "content": request}]
-        for _ in range(self.max_steps):
+        for round_no in range(1, self.max_steps + 1):
+            self._phase(f"Thinking (round {round_no})...")
             response = self.client.messages.create(model=self.model, max_tokens=2500, system=SYSTEM_PROMPT,
                                                    tools=TOOLS, messages=messages)
             content = [_block_to_dict(b) for b in response.content]
@@ -367,7 +389,7 @@ class SecurityAnalystAgent:
             for block in content:
                 if block["type"] == "tool_use":
                     output = self.toolbox.run(block["name"], block["input"])
-                    steps.append({"tool": block["name"], "input": block["input"]})
+                    self._step(steps, block["name"], block["input"])
                     results.append({"type": "tool_result", "tool_use_id": block["id"],
                                     "content": json.dumps(output, default=str)})
             messages.append({"role": "user", "content": results})
@@ -380,7 +402,9 @@ class SecurityAnalystAgent:
 
     def _run_ollama(self, request: str, steps: list) -> AgentResult:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": request}]
-        for _ in range(self.max_steps):
+        for round_no in range(1, self.max_steps + 1):
+            self._phase(f"Thinking (round {round_no})..." + (" Loading the model first can take a minute."
+                                                              if round_no == 1 else ""))
             message = self.ollama.chat(messages, OLLAMA_TOOLS)
             calls = message.get("tool_calls") or []
             messages.append({"role": "assistant", "content": message.get("content", ""), "tool_calls": calls})
@@ -396,11 +420,12 @@ class SecurityAnalystAgent:
                     except json.JSONDecodeError:
                         args = {}
                 output = self.toolbox.run(fn.get("name", ""), args)
-                steps.append({"tool": fn.get("name", "?"), "input": args})
+                self._step(steps, fn.get("name", "?"), args)
                 messages.append({"role": "tool", "tool_name": fn.get("name", ""),
                                  "content": json.dumps(output, default=str)})
         messages.append({"role": "user", "content": "Stop investigating and write your answer now from what "
                                                     "you have found."})
+        self._phase("Writing the report...")
         text = (self.ollama.chat(messages, None).get("content") or "").strip()
         return AgentResult(text, "ai", steps, note=f"Stopped after {self.max_steps} tool rounds.")
 

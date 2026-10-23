@@ -93,6 +93,8 @@ def main(argv=None):
 
             agent = SecurityAnalystAgent(analyzer)
             print(f"\n=== AI analyst: {agent.label} ===")
+            started = time.time()
+            agent.on_progress = lambda text: print(f"  [{time.time() - started:5.0f}s] {text}", flush=True)
             result = agent.investigate()
             if result.steps:
                 print("Investigation steps: " + " -> ".join(
@@ -100,6 +102,7 @@ def main(argv=None):
                     for s in result.steps))
             if result.note:
                 print(f"Note: {result.note}")
+            print(f"Finished in {time.time() - started:.0f} seconds.\n")
             print(result.report)
         if args.report:
             with open(args.report, "w") as f:
