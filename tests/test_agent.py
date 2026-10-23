@@ -72,7 +72,7 @@ def test_agent_stops_after_max_steps(analyzer):
     looping = [([tool(f"t{i}", "get_overview", {})], "tool_use") for i in range(3)]
     client = FakeClient(looping + [([text("Final answer.")], "end_turn")])
     result = SecurityAnalystAgent(analyzer, client=client, max_steps=3).investigate()
-    assert result.report == "Final answer."
+    assert result.report.startswith("Final answer.")  # plus incidents added by the safety check
     assert len(result.steps) == 3
     assert "Stopped after 3" in result.note
     assert client.requests[-1]["tool_choice"] == {"type": "none"}
@@ -191,3 +191,26 @@ def test_progress_is_reported(analyzer):
     agent.investigate()
     assert seen[0].startswith("Thinking (round 1)") and "Step 1: get_overview()" in seen
     assert agent.progress["running"] is False and len(agent.progress["steps"]) == 1
+
+
+def test_list_alerts_puts_most_serious_first_and_ignores_tiny_limits(analyzer):
+    analyzer.process(PacketInfo(T0 + 80, "192.168.1.99", "192.168.1.1", "TCP", 60, 1, 23, "S"))  # newer, medium
+    alerts = Toolbox(analyzer).run("list_alerts", {"limit": 1})["alerts"]
+    assert alerts[0]["severity"] == "high" and alerts[0]["kind"] == "Port scan"
+    assert len(alerts) >= 2
+
+
+def test_overview_lists_every_incident(analyzer):
+    incidents = Toolbox(analyzer).run("get_overview", {})["incidents"]
+    assert incidents[0]["type"] == "Port scan" and incidents[0]["source"] == "192.168.1.99"
+
+
+def test_safety_check_adds_incidents_the_model_missed(analyzer):
+    ollama = FakeOllama([{"role": "assistant", "content": "## Summary\nOnly some risky ports. Nothing else."}])
+    result = SecurityAnalystAgent(analyzer, ollama=ollama).investigate()
+    assert "Also detected (added by the safety check" in result.report
+    assert "Port scan - High" in result.report
+    assert "safety check added" in result.note
+    # A question is answered as asked, without the check.
+    ollama2 = FakeOllama([{"role": "assistant", "content": "It scanned ports."}])
+    assert SecurityAnalystAgent(analyzer, ollama=ollama2).ask("What did it do?").report == "It scanned ports."
