@@ -23,7 +23,6 @@ Unsupervised: it needs no labelled attack data, which real networks rarely have.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
 
 from .analyzer import PacketInfo, is_local, shannon_entropy
 

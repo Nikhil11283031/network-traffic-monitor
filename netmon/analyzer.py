@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import ipaddress
 import math
+import statistics
 import threading
+import uuid
 from collections import Counter, defaultdict, deque
 from dataclasses import asdict, dataclass, field
 
@@ -28,6 +30,10 @@ RISKY_PORTS = {
 }
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
+
+# Services people log in to - many attempts on one of these in a short time looks like password guessing.
+LOGIN_PORTS = {21: "FTP", 22: "SSH", 23: "Telnet", 110: "POP3", 143: "IMAP", 445: "SMB", 1433: "MS SQL",
+               3306: "MySQL", 3389: "Remote Desktop", 5432: "PostgreSQL", 5900: "VNC"}
 
 
 @dataclass
@@ -56,8 +62,39 @@ class Config:
     dns_entropy: float = 3.8  # or one this random ...
     dns_entropy_min_length: int = 20  # ... and at least this long
     new_device_warmup: float = 30.0  # devices seen after this point are reported as new
+    brute_force_attempts: int = 20  # connection attempts to one login service ...
+    brute_force_window: float = 60.0  # ... within this many seconds
+    beacon_min_connections: int = 8  # regular connections to the same outside server ...
+    beacon_max_jitter: float = 0.15  # ... whose gaps vary by at most 15% ...
+    beacon_min_interval: float = 5.0  # ... and are at least this many seconds apart
+    watch_countries: str = ""  # comma-separated country codes to alert on, e.g. "KP,IR" (needs GeoIP data)
     alert_cooldown: float = 60.0  # do not repeat the same alert within this many seconds
     max_alerts: int = 500
+
+    def update(self, values: dict) -> dict:
+        """Change settings at run time (from the dashboard). Unknown names and bad values are rejected."""
+        changed, errors = {}, {}
+        for name, raw in values.items():
+            if name not in self.__dataclass_fields__ or name == "max_alerts":
+                errors[name] = "unknown setting"
+                continue
+            current = getattr(self, name)
+            try:
+                if isinstance(current, str):
+                    value = ",".join(c.strip().upper() for c in str(raw).split(",") if c.strip())
+                else:
+                    value = type(current)(raw)
+                    if value <= 0 or (name == "beacon_max_jitter" and value >= 1):
+                        raise ValueError("must be positive" + (" and below 1" if name == "beacon_max_jitter" else ""))
+            except (TypeError, ValueError) as exc:
+                errors[name] = str(exc) or "invalid value"
+                continue
+            setattr(self, name, value)
+            changed[name] = value
+        return {"changed": changed, "errors": errors}
+
+    def watched(self) -> set[str]:
+        return {c for c in self.watch_countries.upper().split(",") if c}
 
 
 @dataclass
@@ -69,6 +106,9 @@ class Alert:
     target: str
     message: str
     mitre: list = field(default_factory=list)  # MITRE ATT&CK techniques, see mitre.py
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    acked: bool = False  # marked as handled on the dashboard
+    ack_note: str = ""
 
 
 def shannon_entropy(text: str) -> float:
@@ -118,10 +158,12 @@ class _Window:
 
 
 class Analyzer:
-    def __init__(self, config: Config | None = None, intel=None, ml=None):
+    def __init__(self, config: Config | None = None, intel=None, ml=None, geo=None):
         self.config = config or Config()
         self.intel = intel  # ThreatIntel blocklists (optional)
         self.ml = ml  # AnomalyDetector (optional)
+        self.geo = geo  # GeoIP country lookup (optional)
+        self.listeners: list = []  # called with each new alert (history database, notifications)
         self.lock = threading.Lock()
         self.first_ts: float | None = None
         self.last_ts: float | None = None
@@ -142,6 +184,10 @@ class Analyzer:
         self._scan = defaultdict(lambda: _Window(self.config.port_scan_window))
         self._syn = defaultdict(lambda: _Window(self.config.syn_flood_window))
         self._volume = defaultdict(lambda: _Window(self.config.heavy_window))
+        self._login = defaultdict(lambda: _Window(self.config.brute_force_window))
+        self._beacon: dict[tuple, deque] = defaultdict(lambda: deque(maxlen=24))
+        self.ip_mac: dict[str, str] = {}  # local IP -> MAC address it was first seen with
+        self._country_alerted: set = set()
 
     # ------------------------------------------------------------------ processing
 
@@ -168,6 +214,7 @@ class Analyzer:
                 del self.timeline[old]
 
         self._track_device(p, new_alerts)
+        self._check_arp(p, new_alerts)
         if self.intel is not None:
             self._check_intel(p, new_alerts)
         if self.ml is not None:
@@ -201,6 +248,28 @@ class Analyzer:
                             f"{window.total} connection attempts to {p.dst} in "
                             f"{self.config.syn_flood_window:g} seconds (possible denial of service).")
 
+        # Brute force: many connection attempts to one login service (password guessing).
+        if is_syn and p.dport in LOGIN_PORTS:
+            window = self._login[(p.src, p.dst, p.dport)]
+            window.add(p.ts)
+            if window.total >= self.config.brute_force_attempts:
+                self._alert(new_alerts, p.ts, "high", "Brute force", p.src, f"{p.dst}:{p.dport}",
+                            f"{p.src} made {window.total} connection attempts to {LOGIN_PORTS[p.dport]} "
+                            f"(port {p.dport}) on {p.dst} in {self.config.brute_force_window:g} seconds - "
+                            "possible password guessing.")
+
+        # Beaconing: malware "calling home" to its server on a fixed timer.
+        if starts_conversation and p.proto != "DNS" and is_local(p.src) and not is_local(p.dst):
+            self._check_beacon(p, new_alerts)
+
+        # Countries the owner asked to be warned about.
+        if self.geo is not None and self.config.watch_countries and is_local(p.src) and not is_local(p.dst):
+            country = self.geo.country(p.dst)
+            if country and country in self.config.watched() and (p.src, p.dst) not in self._country_alerted:
+                self._country_alerted.add((p.src, p.dst))
+                self._alert(new_alerts, p.ts, "medium", "Watched country", p.src, p.dst,
+                            f"{p.src} connected to {p.dst} in {country}, a country on your watch list.")
+
         # Risky or unusual services.
         if p.dport in RISKY_PORTS and starts_conversation:
             self._alert(new_alerts, p.ts, "medium", "Risky port", p.src, f"{p.dst}:{p.dport}",
@@ -232,6 +301,39 @@ class Analyzer:
                             f"{p.src} looked up a random-looking name ({len(label)} characters, "
                             f"entropy {entropy:.1f}) under {base}. This can be DNS tunnelling or malware.")
         return new_alerts
+
+    def _check_arp(self, p: PacketInfo, new_alerts: list[Alert]):
+        """ARP spoofing: a second device claims an IP address that already belongs to another device. This is
+        how attackers put themselves in the middle of other people's traffic (often claiming the router)."""
+        if not p.src_mac or not is_local(p.src) or p.src_mac.lower() in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"):
+            return
+        mac = p.src_mac.lower()
+        known = self.ip_mac.get(p.src)
+        if known is None:
+            self.ip_mac[p.src] = mac
+        elif known != mac and p.proto == "ARP":
+            self._alert(new_alerts, p.ts, "high", "ARP spoofing", mac, p.src,
+                        f"Device {mac} claims to be {p.src}, which belongs to {known} - possible "
+                        "man-in-the-middle attack (ARP spoofing).")
+
+    def _check_beacon(self, p: PacketInfo, new_alerts: list[Alert]):
+        times = self._beacon[(p.src, p.dst)]
+        if times and p.ts - times[-1] < 1.0:  # the same connection (retries, several packets)
+            return
+        times.append(p.ts)
+        if len(times) < self.config.beacon_min_connections:
+            return
+        recent = list(times)[-self.config.beacon_min_connections:]
+        gaps = [b - a for a, b in zip(recent, recent[1:])]
+        mean = statistics.mean(gaps)
+        if mean < self.config.beacon_min_interval:
+            return
+        jitter = statistics.pstdev(gaps) / mean
+        if jitter <= self.config.beacon_max_jitter:
+            self._alert(new_alerts, p.ts, "medium", "Beaconing", p.src, p.dst,
+                        f"{p.src} connects to {p.dst} every {mean:.0f} seconds like clockwork "
+                        f"({len(recent)} times, timing varies only {jitter * 100:.0f}%) - malware often "
+                        "\"calls home\" to its server on a timer.", cooldown=1800)  # once per 30 minutes
 
     def _ml_alert(self, a: dict, new_alerts: list[Alert]):
         self._alert(new_alerts, a["ts"], "medium", "Anomaly (ML)", a["host"], "behaviour",
@@ -280,15 +382,41 @@ class Analyzer:
         if p.src_mac and not device["mac"]:
             device["mac"] = p.src_mac
 
-    def _alert(self, new_alerts, ts, severity, kind, source, target, message, port=None):
+    def _alert(self, new_alerts, ts, severity, kind, source, target, message, port=None, cooldown=None):
         key = (kind, source, target)
         last = self._last_alert.get(key)
-        if last is not None and ts - last < self.config.alert_cooldown:
+        if last is not None and ts - last < max(self.config.alert_cooldown, cooldown or 0):
             return
         self._last_alert[key] = ts
         alert = Alert(ts, severity, kind, source, target, message, techniques_for(kind, port))
         self.alerts.append(alert)
         new_alerts.append(alert)
+        for listener in self.listeners:
+            try:
+                listener(alert)
+            except Exception:  # a broken listener (e.g. a full disk) must never stop the monitor
+                pass
+
+    def update_config(self, values: dict) -> dict:
+        """Change detection settings while running; time windows restart so the new limits apply at once."""
+        with self.lock:
+            result = self.config.update(values)
+            if result["changed"]:
+                for windows in (self._scan, self._syn, self._volume, self._login):
+                    windows.clear()
+                self._country_alerted.clear()
+            return result
+
+    def acknowledge(self, alert_id: str, note: str = "", acked: bool = True) -> Alert | None:
+        with self.lock:
+            for alert in self.alerts:
+                if alert.id == alert_id:
+                    alert.acked, alert.ack_note = acked, note[:500]
+                    return alert
+        return None
+
+    def country(self, ip: str) -> str | None:
+        return self.geo.country(ip) if self.geo is not None and not is_local(ip) else None
 
     # ------------------------------------------------------------------ reporting
 
@@ -307,6 +435,7 @@ class Analyzer:
                 "ports_contacted": [{"port": port, "count": n, "risky": port in RISKY_PORTS}
                                     for port, n in self.host_ports[ip].most_common(15)],
                 "distinct_ports_contacted": len(self.host_ports[ip]),
+                "country": self.country(ip),
                 "dns_lookups": [{"name": d, "count": n} for d, n in self.host_dns[ip].most_common(10)],
                 "alerts": [asdict(a) for a in self.alerts if ip in (a.source, a.target.split(":")[0])],
             }
@@ -326,8 +455,8 @@ class Analyzer:
                 "protocols": dict(self.protocols.most_common()),
                 "timeline": [{"t": s, "packets": self.timeline.get(s, [0, 0])[0],
                               "bytes": self.timeline.get(s, [0, 0])[1]} for s in seconds],
-                "top_talkers": [{"host": h, "sent": self.sent[h], "received": self.received[h]}
-                                for h in talkers],
+                "top_talkers": [{"host": h, "sent": self.sent[h], "received": self.received[h],
+                                 "country": self.country(h)} for h in talkers],
                 "top_ports": [{"port": port, "count": n, "risky": port in RISKY_PORTS}
                               for port, n in self.dst_ports.most_common(8)],
                 "dns": [{"domain": d, "count": n} for d, n in self.dns_domains.most_common(8)],
@@ -335,5 +464,7 @@ class Analyzer:
                 "alert_counts": dict(Counter(a.severity for a in self.alerts)),
                 "intel": self.intel.summary() if self.intel is not None else None,
                 "ml": self.ml.status() if self.ml is not None else None,
+                "geo": self.geo.summary() if self.geo is not None else None,
+                "config": asdict(self.config),
                 "alerts": [asdict(a) for a in alerts],
             }

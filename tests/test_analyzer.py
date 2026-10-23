@@ -150,6 +150,85 @@ def test_sample_capture_end_to_end(tmp_path):
         ("Risky port", "192.168.1.99"),
         ("Suspicious DNS", "192.168.1.12"),
         ("High traffic", "192.168.1.11"),
+        ("ARP spoofing", "de:ad:be:ef:00:99"),
+        ("Brute force", "192.168.1.99"),
+        ("Beaconing", "192.168.1.12"),
     }
-    assert len(snap["devices"]) == 4  # laptop, phone, TV, intruder (the router only receives)
+    assert len(snap["devices"]) == 5  # router (seen through its ARP announcement), laptop, phone, TV, intruder
     assert Path(path).stat().st_size > 0
+
+
+
+# ---------------------------------------------------------------- new detections
+
+def test_arp_spoofing_detected_only_when_mac_changes():
+    a = Analyzer()
+    a.process(PacketInfo(T0, "192.168.1.1", "192.168.1.1", "ARP", 42, src_mac="aa:bb:cc:00:00:01"))
+    a.process(PacketInfo(T0 + 1, "192.168.1.1", "192.168.1.10", "ARP", 42, src_mac="AA:BB:CC:00:00:01"))  # same
+    assert not a.alerts
+    a.process(PacketInfo(T0 + 2, "192.168.1.1", "192.168.1.10", "ARP", 42, src_mac="de:ad:be:ef:00:99"))
+    alert = a.alerts[-1]
+    assert alert.kind == "ARP spoofing" and alert.severity == "high" and alert.mitre[0]["id"] == "T1557.002"
+    assert "aa:bb:cc:00:00:01" in alert.message
+
+
+def test_brute_force_needs_many_attempts_on_a_login_port():
+    a = Analyzer()
+    for i in range(19):
+        a.process(PacketInfo(T0 + i, "192.168.1.99", "192.168.1.10", "TCP", 60, 5000 + i, 22, "S"))
+    assert not [x for x in a.alerts if x.kind == "Brute force"]
+    a.process(PacketInfo(T0 + 20, "192.168.1.99", "192.168.1.10", "TCP", 60, 6000, 22, "S"))
+    alert = [x for x in a.alerts if x.kind == "Brute force"][0]
+    assert "20 connection attempts to SSH" in alert.message and alert.mitre[0]["id"] == "T1110"
+    b = Analyzer()  # 20 attempts on a web port are not password guessing
+    for i in range(25):
+        b.process(PacketInfo(T0 + i, "192.168.1.99", "192.168.1.10", "TCP", 60, 5000 + i, 443, "S"))
+    assert not b.alerts
+
+
+def test_beaconing_needs_regular_timing():
+    regular, irregular = Analyzer(), Analyzer()
+    for i in range(10):
+        regular.process(PacketInfo(T0 + i * 30, "192.168.1.12", "198.51.100.23", "TCP", 60, 4000 + i, 443, "S"))
+    for i, t in enumerate([0, 4, 31, 33, 80, 140, 141, 200, 260, 262]):
+        irregular.process(PacketInfo(T0 + t, "192.168.1.12", "198.51.100.23", "TCP", 60, 4000 + i, 443, "S"))
+    assert [x.kind for x in regular.alerts] == ["Beaconing"]
+    assert "every 30 seconds" in regular.alerts[0].message
+    assert not irregular.alerts
+
+
+def test_watched_country_alert_with_geoip():
+    from netmon.geoip import GeoIP
+
+    geo = GeoIP()
+    geo.load_rows([["198.51.100.0", "198.51.100.255", "KP"], ["2001:db8::", "2001:db8::ffff", "IR"],
+                   ["203.0.113.0", "203.0.113.255", "AU"], ["bad", "row", "XX"]])
+    assert geo.country("198.51.100.7") == "KP" and geo.country("2001:db8::5") == "IR"
+    assert geo.country("8.8.8.8") is None and geo.size == 3
+    a = Analyzer(geo=geo)
+    a.config.update({"watch_countries": "kp, ir"})
+    a.process(PacketInfo(T0, "192.168.1.10", "203.0.113.5", "TCP", 60, 1, 443, "S"))  # AU: not watched
+    a.process(PacketInfo(T0 + 1, "192.168.1.10", "198.51.100.7", "TCP", 60, 1, 443, "S"))
+    a.process(PacketInfo(T0 + 2, "192.168.1.10", "198.51.100.7", "TCP", 60, 2, 443, "S"))  # once per pair
+    assert [x.kind for x in a.alerts] == ["Watched country"] and "KP" in a.alerts[0].message
+    countries = {t["host"]: t["country"] for t in a.snapshot()["top_talkers"]}
+    assert countries["198.51.100.7"] == "KP" and countries["192.168.1.10"] is None  # local: no country
+
+
+def test_config_update_validates_and_applies():
+    a = Analyzer()
+    result = a.update_config({"port_scan_ports": "5", "beacon_max_jitter": 2, "nonsense": 1, "heavy_bytes": -1})
+    assert result["changed"] == {"port_scan_ports": 5}
+    assert set(result["errors"]) == {"beacon_max_jitter", "nonsense", "heavy_bytes"}
+    for i, port in enumerate(range(1, 6)):
+        a.process(PacketInfo(T0 + i * 0.1, "192.168.1.99", "192.168.1.10", "TCP", 60, 61000, port, "S"))
+    assert [x.kind for x in a.alerts] == ["Port scan"]
+
+
+def test_acknowledge_alert():
+    a = Analyzer()
+    a.process(PacketInfo(T0, "192.168.1.99", "192.168.1.1", "TCP", 60, 1, 23, "S"))
+    alert_id = a.alerts[0].id
+    assert a.acknowledge(alert_id, "checked - my own test").acked
+    assert a.snapshot()["alerts"][0]["ack_note"] == "checked - my own test"
+    assert a.acknowledge("missing") is None

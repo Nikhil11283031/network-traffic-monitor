@@ -11,3 +11,7 @@ report*.json
 # Downloaded threat-intelligence feeds (re-download with: python3 -m netmon update-intel)
 intel/*.txt
 !intel/demo.txt
+
+# Local data: alert history and the downloaded country database
+netmon.db
+geoip/

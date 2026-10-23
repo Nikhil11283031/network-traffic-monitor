@@ -8,6 +8,9 @@ Timeline (seconds from the start):
     40     an unknown device (192.168.1.99) joins the network
     45-50  it port-scans the laptop
     55     it tries to log in to the router with Telnet
+    57     it sends fake ARP replies claiming to be the router (ARP spoofing / man-in-the-middle)
+    58-64  it tries to guess the laptop's SSH password (30 login attempts)
+    3-83   the smart TV quietly "calls home" to a server every 10 seconds (beaconing)
     60-66  the smart TV looks up random-looking names (DNS tunnelling)
     70-78  the phone uploads 6 MB to an outside server (possible data theft)
 """
@@ -17,7 +20,7 @@ import string
 import sys
 from pathlib import Path
 
-from scapy.all import DNS, DNSQR, IP, TCP, UDP, Ether, Raw, wrpcap
+from scapy.all import ARP, DNS, DNSQR, IP, TCP, UDP, Ether, Raw, wrpcap
 
 START = 1_792_000_000.0  # a fixed start time so the file is the same every time
 ROUTER = ("192.168.1.1", "aa:bb:cc:00:00:01")
@@ -57,6 +60,18 @@ def main(out="samples/demo.pcap"):
                     packets.append(back)
                     packets.append(pkt(t + 0.06 + i * 0.03, device, ip, TCP(sport=sport, dport=443, flags="A")))
 
+    # 1 s: the router announces its address (ARP), so its real MAC address is known.
+    arp = Ether(src=ROUTER[1], dst="ff:ff:ff:ff:ff:ff") / ARP(op=2, psrc=ROUTER[0], hwsrc=ROUTER[1],
+                                                              pdst=ROUTER[0], hwdst="ff:ff:ff:ff:ff:ff")
+    arp.time = START + 1.0
+    packets.append(arp)
+
+    # 3-83 s: the TV connects to the same outside server every 10 seconds (malware beacon).
+    for i in range(9):
+        t = 3.0 + i * 10 + rng.uniform(-0.3, 0.3)
+        packets.append(pkt(t, TV, "198.51.100.23", TCP(sport=45000 + i, dport=443, flags="S")))
+        packets.append(pkt(t + 0.05, TV, "198.51.100.23", TCP(sport=45000 + i, dport=443, flags="A"), b"b" * 90))
+
     # 40 s: an unknown device appears, then port-scans the laptop (ports 1-100 over five seconds).
     packets.append(pkt(40.0, INTRUDER, ROUTER[0], UDP(sport=5353, dport=53) / DNS(rd=1, qd=DNSQR(qname="router.local"))))
     for i, port in enumerate(range(1, 101)):
@@ -65,6 +80,18 @@ def main(out="samples/demo.pcap"):
 
     # 55 s: it tries Telnet on the router.
     packets.append(pkt(55.0, INTRUDER, ROUTER[0], TCP(sport=61001, dport=23, flags="S")))
+
+    # 57 s: it claims to be the router (ARP spoofing) to put itself in the middle of everyone's traffic.
+    for i in range(3):
+        spoof = Ether(src=INTRUDER[1], dst=LAPTOP[1]) / ARP(op=2, psrc=ROUTER[0], hwsrc=INTRUDER[1],
+                                                            pdst=LAPTOP[0], hwdst=LAPTOP[1])
+        spoof.time = START + 57.0 + i * 0.5
+        packets.append(spoof)
+
+    # 58-64 s: it tries to guess the laptop's SSH password.
+    for i in range(30):
+        packets.append(pkt(58 + i * 0.2, INTRUDER, LAPTOP[0], TCP(sport=62000 + i, dport=22, flags="S"),
+                           dst_mac=LAPTOP[1]))
 
     # 60-66 s: the TV sends data hidden in DNS names.
     for i in range(12):

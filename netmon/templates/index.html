@@ -7,29 +7,39 @@
 <style>
   :root {
     --bg: #f4f6f8; --panel: #ffffff; --text: #17202a; --muted: #5d6d7e; --line: #e3e8ee;
-    --accent: #1f6feb; --high: #c62828; --medium: #b26a00; --low: #00838f; --info: #607d8b;
-    --high-bg: #fdecea; --medium-bg: #fff4e0; --low-bg: #e0f4f5; --info-bg: #eceff1;
+    --accent: #1f6feb; --high: #c62828; --medium: #b26a00; --low: #00838f; --info: #607d8b; --ok: #2e7d32;
+    --high-bg: #fdecea; --medium-bg: #fff4e0; --low-bg: #e0f4f5; --info-bg: #eceff1; --ok-bg: #e8f5e9;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1419; --panel: #182029; --text: #e6edf3; --muted: #8b98a5; --line: #2a3541;
-      --accent: #58a6ff; --high: #ff6b6b; --medium: #f0b44c; --low: #4dd0e1; --info: #90a4ae;
-      --high-bg: #3a1d1d; --medium-bg: #3a2e14; --low-bg: #12323a; --info-bg: #222c35;
+      --accent: #58a6ff; --high: #ff6b6b; --medium: #f0b44c; --low: #4dd0e1; --info: #90a4ae; --ok: #66bb6a;
+      --high-bg: #3a1d1d; --medium-bg: #3a2e14; --low-bg: #12323a; --info-bg: #222c35; --ok-bg: #1b3320;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
          background: var(--bg); color: var(--text); }
-  header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
-           padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+           padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
   h1 { margin: 0; font-size: 20px; }
-  .source { color: var(--muted); font-size: 13px; }
+  .source { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
   .live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2ea043;
           margin-right: 6px; animation: pulse 1.5s infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
-  main { padding: 20px 16px; display: grid; gap: 16px; max-width: 1400px; margin: 0 auto; grid-template-columns: minmax(0, 1fr); }
+  .toolbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  nav { display: flex; gap: 4px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+        overflow-x: auto; }
+  nav button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted);
+               padding: 10px 12px; font-weight: 600; white-space: nowrap; }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+  nav .count { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--high-bg);
+               color: var(--high); font-size: 11px; margin-left: 4px; }
+  main { padding: 16px; display: grid; gap: 16px; max-width: 1400px; margin: 0 auto; grid-template-columns: minmax(0, 1fr); }
   main > *, .grid2 > *, .grid3 > * { min-width: 0; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .tab[hidden] { display: none; }
+  .tab { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
   .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
   .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .card .value { font-size: 26px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
@@ -38,19 +48,28 @@
   .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
   @media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
   h2 { margin: 0 0 10px; font-size: 15px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .panel-head h2 { margin: 0; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  tr.acked td { opacity: .55; }
+  code, pre { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 6px 0;
+        white-space: pre-wrap; overflow-wrap: anywhere; }
   .sev { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 700;
-         text-transform: uppercase; }
+         text-transform: uppercase; white-space: nowrap; }
   .sev.high { color: var(--high); background: var(--high-bg); }
   .sev.medium { color: var(--medium); background: var(--medium-bg); }
   .sev.low { color: var(--low); background: var(--low-bg); }
-  .sev.info { color: var(--info); background: var(--info-bg); }
-  .alerts { max-height: 360px; overflow-y: auto; }
+  .sev.info, .sev.proposed { color: var(--info); background: var(--info-bg); }
+  .sev.approved { color: var(--ok); background: var(--ok-bg); }
+  .sev.dismissed { color: var(--muted); background: var(--bg); }
+  .alerts { max-height: 420px; overflow-y: auto; }
   .empty { color: var(--muted); padding: 10px 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
   .bars div { display: grid; grid-template-columns: 70px 1fr 60px; gap: 8px; align-items: center; margin: 6px 0; }
   .bar { height: 10px; border-radius: 5px; background: var(--accent); min-width: 2px; }
   .risky { color: var(--high); font-weight: 600; }
@@ -58,22 +77,28 @@
            margin: 1px 2px 1px 0; border-radius: 4px; border: 1px solid var(--line); color: var(--accent);
            text-decoration: none; white-space: nowrap; }
   .mitre:hover { border-color: var(--accent); }
-  .chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
   .chip { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 12px; padding: 2px 10px; }
   .chip b { color: var(--text); font-weight: 600; }
   svg text { fill: var(--muted); font-size: 11px; }
   .table-wrap { overflow-x: auto; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  input, select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg);
+                  color: var(--text); font: inherit; min-width: 0; }
+  .filters input[type=search] { flex: 1 1 200px; }
+  label.check { display: inline-flex; gap: 5px; align-items: center; font-size: 13px; color: var(--muted); }
+  button, .button { padding: 8px 13px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent);
+    color: #fff; font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.secondary, .button.secondary { background: transparent; color: var(--accent); }
+  button.small, .button.small { padding: 3px 9px; font-size: 12px; font-weight: 600; }
+  button.danger { border-color: var(--high); background: transparent; color: var(--high); }
+  button:disabled { opacity: .5; cursor: wait; }
   .agent-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
   .agent-head h2 { margin: 0; }
   .mode { font-size: 12px; color: var(--muted); }
   .mode b { color: var(--accent); }
   .agent-controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
-  .agent-controls input { flex: 1 1 260px; min-width: 0; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line);
-    background: var(--bg); color: var(--text); font: inherit; }
-  button { padding: 9px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent);
-    color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-  button.secondary { background: transparent; color: var(--accent); }
-  button:disabled { opacity: .5; cursor: wait; }
+  .agent-controls input { flex: 1 1 260px; }
   .examples { display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; }
   .examples a { color: var(--accent); cursor: pointer; text-decoration: none; border: 1px solid var(--line);
     border-radius: 12px; padding: 2px 10px; }
@@ -85,25 +110,55 @@
   .report h4 { font-size: 14px; margin: 14px 0 4px; }
   .report p { margin: 6px 0; }
   .report ul { margin: 4px 0; padding-left: 20px; }
+  .action { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .action.dismissed { opacity: .6; }
+  .action-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .action-head strong { font-size: 14px; }
+  .action .buttons { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .banner { background: var(--medium-bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+            padding: 10px 14px; font-size: 13px; }
+  .settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+  .settings label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; align-content: start; }
+  .settings label span { font-weight: 400; color: var(--muted); font-size: 12px; }
+  .field-error { color: var(--high); font-size: 12px; font-weight: 400; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--panel);
+           padding: 9px 16px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none;
+           max-width: calc(100% - 32px); }
+  .toast.show { opacity: 1; }
+  dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
+  dl.facts dt { color: var(--muted); }
+  dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1>Network Traffic Monitor</h1>
-    <div class="source"><span class="live"></span>{{ source }}</div>
+    <div class="source"><span class="live"></span><span id="source">{{ source }}</span> · <span id="updated">Waiting for traffic…</span></div>
+    <div class="chips" id="chips" style="margin-top:6px"></div>
   </div>
-  <div>
-    <div class="source" id="updated">Waiting for traffic…</div>
-    <div class="chips" id="chips"></div>
+  <div class="toolbar">
+    <button class="secondary" id="upload-btn" title="Analyse a Wireshark capture file">⬆ Analyse a file</button>
+    <input type="file" id="upload" accept=".pcap,.pcapng,.cap" hidden>
+    <a class="button secondary" href="/api/export/alerts.csv" title="Download the alerts as a spreadsheet">⬇ CSV</a>
+    <a class="button secondary" href="/api/export/alerts.json" title="Download the alerts as JSON">⬇ JSON</a>
+    <a class="button" href="/api/report.pdf" title="Incident report with the analyst's findings">📄 PDF report</a>
   </div>
 </header>
+<nav>
+  <button class="active" data-tab="overview">Overview</button>
+  <button data-tab="response">Response <span class="count" id="n-response" hidden></span></button>
+  <button data-tab="history">History</button>
+  <button data-tab="settings">Settings</button>
+</nav>
 <main>
+<!-- ============================================================ OVERVIEW -->
+<div class="tab" id="tab-overview">
   <section class="cards">
     <div class="card"><div class="label">Packets</div><div class="value" id="c-packets">0</div></div>
     <div class="card"><div class="label">Data</div><div class="value" id="c-bytes">0 B</div></div>
     <div class="card"><div class="label">Local devices</div><div class="value" id="c-devices">0</div></div>
-    <div class="card" id="card-high"><div class="label">High alerts</div><div class="value" id="c-high">0</div></div>
+    <div class="card" id="card-high"><div class="label">Open high alerts</div><div class="value" id="c-high">0</div></div>
     <div class="card"><div class="label">All alerts</div><div class="value" id="c-alerts">0</div></div>
   </section>
 
@@ -119,10 +174,16 @@
   </section>
 
   <section class="panel">
-    <h2>Alerts</h2>
+    <div class="panel-head"><h2>Alerts</h2><span class="muted small" id="alert-count"></span></div>
+    <div class="filters">
+      <input type="search" id="f-text" placeholder="Search alerts (IP, domain, words)…">
+      <select id="f-sev"><option value="">All severities</option><option>high</option><option>medium</option><option>low</option></select>
+      <select id="f-kind"><option value="">All types</option></select>
+      <label class="check"><input type="checkbox" id="f-acked"> Show handled</label>
+    </div>
     <div class="alerts table-wrap">
       <table>
-        <thead><tr><th>Time</th><th>Severity</th><th>Type</th><th>Details</th><th>MITRE ATT&amp;CK</th></tr></thead>
+        <thead><tr><th>Time</th><th>Severity</th><th>Type</th><th>Details</th><th>MITRE ATT&amp;CK</th><th></th></tr></thead>
         <tbody id="alerts"></tbody>
       </table>
     </div>
@@ -131,7 +192,7 @@
   <section class="panel" id="agent">
     <div class="agent-head">
       <h2>AI security analyst</h2>
-      <span class="mode">Agent: <b>{{ agent_label }}</b>{% if agent_mode != "ai" %} · install Ollama for free AI answers{% endif %}</span>
+      <span class="mode">Agent: <b id="agent-label">{{ agent_label }}</b>{% if agent_mode != "ai" %} · install Ollama for free AI answers{% endif %}</span>
     </div>
     <div class="agent-controls">
       <button id="investigate">Investigate now</button>
@@ -142,6 +203,7 @@
       <a data-q="Which device is the biggest threat and why?">Biggest threat?</a>
       <a data-q="What did 192.168.1.99 do on the network?">What did 192.168.1.99 do?</a>
       <a data-q="Was the upload from 192.168.1.11 normal?">Was the upload normal?</a>
+      <a data-q="Which responses should I approve first, and why?">What should I block?</a>
     </div>
     <div id="agent-out"></div>
   </section>
@@ -149,7 +211,7 @@
   <section class="grid3">
     <div class="panel table-wrap">
       <h2>Top talkers</h2>
-      <table><thead><tr><th>Host</th><th class="num">Sent</th><th class="num">Received</th></tr></thead>
+      <table><thead><tr><th>Host</th><th>Country</th><th class="num">Sent</th><th class="num">Received</th></tr></thead>
         <tbody id="talkers"></tbody></table>
     </div>
     <div class="panel table-wrap">
@@ -170,19 +232,114 @@
       <th class="num">Packets</th></tr></thead>
       <tbody id="devices"></tbody></table>
   </section>
+</div>
+
+<!-- ============================================================ RESPONSE -->
+<div class="tab" id="tab-response" hidden>
+  <div class="banner">The responder <b>suggests</b> firewall rules for each incident. Nothing is ever applied
+    automatically: approve the ones you agree with, then download the rules file, check it and apply it yourself.</div>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Proposed actions</h2>
+      <div class="toolbar">
+        <label class="small muted">Show commands for
+          <select id="platform"></select></label>
+        <a class="button small" id="script-link" href="/api/responses/script?platform=pf">⬇ Approved rules</a>
+      </div>
+    </div>
+    <div id="actions"><p class="empty">Loading…</p></div>
+  </section>
+</div>
+
+<!-- ============================================================ HISTORY -->
+<div class="tab" id="tab-history" hidden>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Alert history</h2>
+      <div class="toolbar">
+        <span class="muted small" id="history-stats"></span>
+        <a class="button small secondary" href="/api/export/alerts.csv?history=1">⬇ All history (CSV)</a>
+      </div>
+    </div>
+    <div class="filters">
+      <input type="search" id="h-text" placeholder="Search history…">
+      <select id="h-sev"><option value="">All severities</option><option>high</option><option>medium</option><option>low</option></select>
+      <select id="h-kind"><option value="">All types</option></select>
+      <label class="check"><input type="checkbox" id="h-open"> Only not handled</label>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When</th><th>Severity</th><th>Type</th><th>Details</th><th>Run</th></tr></thead>
+        <tbody id="history"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<!-- ============================================================ SETTINGS -->
+<div class="tab" id="tab-settings" hidden>
+  <section class="panel">
+    <div class="panel-head"><h2>Detection settings</h2>
+      <div class="toolbar"><button class="secondary small" id="settings-reset">Undo changes</button>
+        <button class="small" id="settings-save">Save settings</button></div></div>
+    <p class="muted small" style="margin-top:0">Changes apply immediately to the traffic being watched.</p>
+    <div class="settings" id="settings"></div>
+  </section>
+  <section class="grid2">
+    <div class="panel">
+      <h2>Status</h2>
+      <dl class="facts" id="facts"></dl>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Notifications</h2><button class="small secondary" id="notify-test">Send test</button></div>
+      <div id="notify" class="small"></div>
+    </div>
+  </section>
+</div>
 </main>
+<div class="toast" id="toast"></div>
 <script>
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const time = (ts) => new Date(ts * 1000).toLocaleTimeString();
+const dateTime = (ts) => new Date(ts * 1000).toLocaleString();
 const size = (b) => b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : b >= 1e6 ? (b / 1e6).toFixed(1) + " MB"
   : b >= 1e3 ? (b / 1e3).toFixed(1) + " KB" : b + " B";
 const PORT_NAMES = {21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 80: "HTTP", 123: "NTP",
   443: "HTTPS", 445: "SMB", 1433: "MS SQL", 3389: "RDP", 4444: "Backdoor", 5353: "mDNS", 5900: "VNC", 6667: "IRC"};
-const rows = (id, items, render, empty) => {
-  $(id).innerHTML = items.length ? items.map(render).join("") : `<tr><td colspan="5" class="empty">${empty}</td></tr>`;
+const rows = (id, items, render, empty, cols = 6) => {
+  $(id).innerHTML = items.length ? items.map(render).join("") : `<tr><td colspan="${cols}" class="empty">${empty}</td></tr>`;
 };
+const mitre = (list) => (list || []).map((m) => `<a class="mitre" href="${esc(m.url)}" target="_blank" rel="noopener"
+  title="${esc(m.name)} - ${esc(m.tactic)}">${esc(m.id)}</a>`).join("") || '<span class="muted">-</span>';
+function toast(text) {
+  const t = $("toast"); t.textContent = text; t.classList.add("show");
+  clearTimeout(t.timer); t.timer = setTimeout(() => t.classList.remove("show"), 3000);
+}
+// Every change request carries X-Netmon: 1 - the server rejects POSTs without it (protection against other websites).
+async function api(url, data, isForm = false) {
+  const opts = data === undefined ? {} : {method: "POST", headers: {"X-Netmon": "1"},
+    body: isForm ? data : JSON.stringify(data)};
+  if (data !== undefined && !isForm) opts.headers["Content-Type"] = "application/json";
+  const res = await fetch(url, opts);
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok && !out.errors) throw new Error(out.error || res.statusText);
+  return out;
+}
 
+// ------------------------------------------------------------------ tabs
+let currentTab = "overview";
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  currentTab = b.dataset.tab;
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("active", x === b));
+  document.querySelectorAll(".tab").forEach((t) => t.hidden = t.id !== "tab-" + currentTab);
+  if (currentTab === "response") loadResponses();
+  if (currentTab === "history") loadHistory();
+  if (currentTab === "settings") loadSettings();
+});
+
+// ------------------------------------------------------------------ overview
+let snap = null;
 function drawChart(points) {
   const svg = $("chart"), W = 600, H = 180, pad = 22;
   if (!points.length) { svg.innerHTML = ""; return; }
@@ -197,36 +354,77 @@ function drawChart(points) {
   svg.innerHTML = out;
 }
 
+function renderAlerts() {
+  if (!snap) return;
+  const text = $("f-text").value.trim().toLowerCase(), sev = $("f-sev").value, kind = $("f-kind").value;
+  const showAcked = $("f-acked").checked;
+  const kinds = [...new Set(snap.alerts.map((a) => a.kind))].sort();
+  const sel = $("f-kind"), keep = sel.value;
+  if (sel.options.length - 1 !== kinds.length) {
+    sel.innerHTML = `<option value="">All types</option>` + kinds.map((k) => `<option>${esc(k)}</option>`).join("");
+    sel.value = keep;
+  }
+  const list = snap.alerts.filter((a) => (showAcked || !a.acked) && (!sev || a.severity === sev) && (!kind || a.kind === kind)
+    && (!text || `${a.message} ${a.source} ${a.target} ${a.kind}`.toLowerCase().includes(text)));
+  const hidden = snap.alerts.filter((a) => a.acked).length;
+  $("alert-count").textContent = `${list.length} shown` + (hidden && !showAcked ? ` · ${hidden} handled hidden` : "");
+  rows("alerts", list, (a) => `<tr class="${a.acked ? "acked" : ""}"><td class="num">${time(a.ts)}</td>
+    <td><span class="sev ${a.severity}">${a.severity}</span></td><td>${esc(a.kind)}</td>
+    <td>${esc(a.message)}${a.acked && a.ack_note ? `<div class="muted small">Handled: ${esc(a.ack_note)}</div>` : ""}</td>
+    <td>${mitre(a.mitre)}</td>
+    <td><button class="small secondary" data-ack="${esc(a.id)}" data-state="${a.acked ? 1 : 0}">${a.acked ? "Reopen" : "Handled"}</button></td></tr>`,
+    snap.alerts.length ? "No alerts match the filters." : "No suspicious activity detected.");
+}
+["f-text", "f-sev", "f-kind", "f-acked"].forEach((id) => $(id).addEventListener("input", renderAlerts));
+$("alerts").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-ack]");
+  if (!b) return;
+  const reopening = b.dataset.state === "1";
+  let note = "";
+  if (!reopening) {
+    try { note = window.prompt("Optional note (e.g. 'my own test', 'device isolated'):", "") ?? null; } catch { note = ""; }
+    if (note === null) return;
+  }
+  try {
+    await api(`/api/alerts/${b.dataset.ack}/ack`, {note, acked: !reopening});
+    toast(reopening ? "Alert reopened." : "Alert marked as handled.");
+    refresh();
+  } catch (err) { toast("Could not update the alert: " + err.message); }
+});
+
 async function refresh() {
-  let s;
-  try { s = await (await fetch("/api/snapshot")).json(); } catch { return; }
-  const counts = s.alert_counts || {};
+  try { snap = await api("/api/snapshot"); } catch { return; }
+  const s = snap, counts = s.alert_counts || {};
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const openHigh = s.alerts.filter((a) => a.severity === "high" && !a.acked).length;
   $("c-packets").textContent = s.packets.toLocaleString();
   $("c-bytes").textContent = size(s.bytes);
   $("c-devices").textContent = s.devices.length;
-  $("c-high").textContent = counts.high || 0;
-  $("card-high").classList.toggle("alerting", !!counts.high);
+  $("c-high").textContent = openHigh;
+  $("card-high").classList.toggle("alerting", openHigh > 0);
   $("c-alerts").textContent = total;
-  if (s.last_ts) $("updated").textContent = `Latest packet ${time(s.last_ts)} · ${Math.round(s.duration)} s watched`;
+  $("source").textContent = s.status.source + (s.status.busy ? " (analysing…)" : "");
+  $("agent-label").textContent = s.status.agent;
+  if (s.status.upload_error) toast("Upload failed: " + s.status.upload_error);
+  $("updated").textContent = s.last_ts ? `latest packet ${time(s.last_ts)} · ${Math.round(s.duration)} s watched` : "waiting for traffic…";
 
   drawChart(s.timeline);
   const pmax = Math.max(1, ...Object.values(s.protocols));
   $("protocols").innerHTML = Object.entries(s.protocols).map(([k, v]) =>
     `<div><span>${esc(k)}</span><span class="bar" style="width:${(v / pmax) * 100}%"></span>
      <span class="num">${v.toLocaleString()}</span></div>`).join("") || `<p class="empty">No traffic yet.</p>`;
+  renderAlerts();
 
-  rows("alerts", s.alerts, (a) => `<tr><td class="num">${time(a.ts)}</td>
-    <td><span class="sev ${a.severity}">${a.severity}</span></td><td>${esc(a.kind)}</td><td>${esc(a.message)}</td>
-    <td>${(a.mitre || []).map((m) => `<a class="mitre" href="${esc(m.url)}" target="_blank" rel="noopener"
-      title="${esc(m.name)} - ${esc(m.tactic)}">${esc(m.id)}</a>`).join("") || '<span style="color:var(--muted)">-</span>'}</td></tr>`,
-    "No suspicious activity detected.");
   const chips = [];
   if (s.intel) chips.push(`Threat intel: <b>${s.intel.indicators.toLocaleString()}</b> indicators`);
   if (s.ml) chips.push(s.ml.state === "unavailable" ? `ML: <b>off</b>`
     : s.ml.state === "learning" ? `ML: <b>learning normal behaviour…</b>` : `ML: <b>active</b> (trained on ${s.ml.trained_on})`);
+  if (s.geo) chips.push(`GeoIP: <b>on</b>`);
+  if (s.status.history) chips.push(`History: <b>${s.status.history.alerts.toLocaleString()}</b> saved`);
+  if (s.status.notifications) chips.push(`Notify: <b>${esc(s.status.notifications.channels.join(", ") || "off")}</b>`);
   $("chips").innerHTML = chips.map((c) => `<span class="chip">${c}</span>`).join("");
-  rows("talkers", s.top_talkers, (t) => `<tr><td><code>${esc(t.host)}</code></td>
+
+  rows("talkers", s.top_talkers, (t) => `<tr><td><code>${esc(t.host)}</code></td><td>${esc(t.country || "-")}</td>
     <td class="num">${size(t.sent)}</td><td class="num">${size(t.received)}</td></tr>`, "No traffic yet.");
   rows("ports", s.top_ports, (p) => `<tr><td class="${p.risky ? "risky" : ""}">${p.port}
     ${PORT_NAMES[p.port] ? "· " + PORT_NAMES[p.port] : ""}${p.risky ? " ⚠" : ""}</td>
@@ -236,14 +434,33 @@ async function refresh() {
   rows("devices", s.devices, (d) => `<tr><td><code>${esc(d.ip)}</code></td><td><code>${esc(d.mac || "-")}</code></td>
     <td>${time(d.first_seen)}</td><td>${time(d.last_seen)}</td><td class="num">${d.packets.toLocaleString()}</td></tr>`,
     "No local devices seen yet.");
+  if (currentTab === "response") loadResponses();
+  else updateResponseCount();
 }
-refresh();
-setInterval(refresh, 2000);
 
-// --- AI analyst -----------------------------------------------------------
+// ------------------------------------------------------------------ upload a capture file
+$("upload-btn").onclick = () => $("upload").click();
+$("upload").onchange = async () => {
+  const file = $("upload").files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  $("upload-btn").disabled = true;
+  toast(`Uploading ${file.name}…`);
+  try {
+    await api("/api/upload", form, true);
+    toast(`Analysing ${file.name}. The dashboard now shows this file.`);
+    $("agent-out").innerHTML = "";
+    refresh();
+  } catch (err) { toast("Upload failed: " + err.message); }
+  $("upload-btn").disabled = false;
+  $("upload").value = "";
+};
+
+// ------------------------------------------------------------------ AI analyst
 function markdown(text) {
   const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
-  let html = "", depth = 0;  // depth = how many lists are open (supports one level of nesting)
+  let html = "", depth = 0;
   const closeTo = (d) => { while (depth > d) { html += "</ul>"; depth--; } };
   for (const line of text.split("\n")) {
     const item = line.match(/^(\s*)[-*] (.*)/);
@@ -262,27 +479,23 @@ function markdown(text) {
   closeTo(0);
   return html;
 }
-
+const stepList = (steps) => steps.map((s) => `<code>${esc(s.tool)}${Object.keys(s.input).length ? "(" + esc(Object.values(s.input).join(", ")) + ")" : ""}</code>`).join(" → ");
 async function runAgent(url, body) {
   const out = $("agent-out"), buttons = [$("investigate"), $("ask")];
   buttons.forEach((b) => (b.disabled = true));
   out.innerHTML = `<p class="steps" id="agent-progress">The analyst is starting…</p>`;
   const timer = setInterval(async () => {
     try {
-      const p = await (await fetch("/api/agent/progress")).json();
+      const p = await api("/api/agent/progress");
       const el = $("agent-progress");
       if (!el || !p.running) return;
-      const steps = p.steps.map((s) => `<code>${esc(s.tool)}${Object.keys(s.input).length ? "(" + esc(Object.values(s.input).join(", ")) + ")" : ""}</code>`).join(" → ");
-      el.innerHTML = `Working for ${p.elapsed} s · ${esc(p.phase)}` + (steps ? `<br>Steps so far: ${steps}` : "");
+      el.innerHTML = `Working for ${p.elapsed} s · ${esc(p.phase)}` + (p.steps.length ? `<br>Steps so far: ${stepList(p.steps)}` : "");
     } catch {}
   }, 1500);
   try {
-    const res = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
-    const r = await res.json();
-    if (!res.ok) throw new Error(r.error || res.statusText);
-    const steps = r.steps.length ? `<div class="steps">Investigation steps (${r.steps.length}): ` + r.steps.map((s) =>
-      `<code>${esc(s.tool)}${Object.keys(s.input).length ? "(" + esc(Object.values(s.input).join(", ")) + ")" : ""}</code>`).join(" → ") + "</div>" : "";
-    out.innerHTML = steps + (r.note ? `<div class="note">${esc(r.note)}</div>` : "") + `<div class="report">${markdown(r.report)}</div>`;
+    const r = await api(url, body || {});
+    out.innerHTML = (r.steps.length ? `<div class="steps">Investigation steps (${r.steps.length}): ${stepList(r.steps)}</div>` : "")
+      + (r.note ? `<div class="note">${esc(r.note)}</div>` : "") + `<div class="report">${markdown(r.report)}</div>`;
   } catch (e) {
     out.innerHTML = `<p class="note">Error: ${esc(e.message)}</p>`;
   } finally {
@@ -294,6 +507,148 @@ $("investigate").onclick = () => runAgent("/api/agent/investigate");
 $("ask").onclick = () => runAgent("/api/agent/ask", {question: $("question").value});
 $("question").addEventListener("keydown", (e) => { if (e.key === "Enter") $("ask").click(); });
 document.querySelectorAll(".examples a").forEach((a) => (a.onclick = () => { $("question").value = a.dataset.q; $("ask").click(); }));
+
+// ------------------------------------------------------------------ responder
+let platforms = null, lastActions = [];
+async function updateResponseCount() {
+  try {
+    const r = await api("/api/responses");
+    lastActions = r.responses;
+    const open = r.responses.filter((a) => a.status === "proposed").length;
+    $("n-response").hidden = !open;
+    $("n-response").textContent = open;
+  } catch {}
+}
+async function loadResponses() {
+  let r;
+  try { r = await api("/api/responses"); } catch { return; }
+  lastActions = r.responses;
+  if (!platforms) {
+    platforms = r.platforms;
+    $("platform").innerHTML = Object.entries(platforms).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
+  }
+  const plat = $("platform").value || "pf";
+  $("script-link").href = `/api/responses/script?platform=${plat}`;
+  const open = r.responses.filter((a) => a.status === "proposed").length;
+  $("n-response").hidden = !open;
+  $("n-response").textContent = open;
+  if (document.activeElement && document.activeElement.closest && document.activeElement.closest("#actions")) return;
+  $("actions").innerHTML = r.responses.length ? r.responses.map((a) => `<div class="action ${a.status}">
+    <div class="action-head"><strong>${esc(a.title)}</strong>
+      <span><span class="sev ${a.severity}">${a.severity}</span> <span class="sev ${a.status}">${a.status}</span></span></div>
+    <div class="muted small">${esc(a.reason)}${a.alerts.length > 1 ? ` (+${a.alerts.length - 1} related alert${a.alerts.length > 2 ? "s" : ""})` : ""}</div>
+    <pre>${esc(a.commands[plat])}</pre>
+    <div class="buttons">
+      ${a.status !== "approved" ? `<button class="small" data-act="${a.id}" data-status="approved">Approve</button>` : ""}
+      ${a.status !== "dismissed" ? `<button class="small secondary" data-act="${a.id}" data-status="dismissed">Dismiss</button>` : ""}
+      ${a.status !== "proposed" ? `<button class="small secondary" data-act="${a.id}" data-status="proposed">Undo</button>` : ""}
+      <button class="small secondary" data-copy="${a.id}">Copy command</button>
+    </div></div>`).join("") : `<p class="empty">No actions to propose - no incidents need a response.</p>`;
+}
+$("platform").onchange = loadResponses;
+$("actions").addEventListener("click", async (e) => {
+  const act = e.target.closest("button[data-act]"), copy = e.target.closest("button[data-copy]");
+  if (act) {
+    try {
+      await api(`/api/responses/${act.dataset.act}`, {status: act.dataset.status});
+      toast(act.dataset.status === "approved" ? "Approved - included in the downloadable rules file." : "Updated.");
+      act.blur();
+      loadResponses();
+    } catch (err) { toast(err.message); }
+  } else if (copy) {
+    const a = lastActions.find((x) => x.id === copy.dataset.copy);
+    try { await navigator.clipboard.writeText(a.commands[$("platform").value]); toast("Command copied."); }
+    catch { toast("Copy failed - select the command text instead."); }
+  }
+});
+
+// ------------------------------------------------------------------ history
+let historyTimer;
+async function loadHistory() {
+  const params = new URLSearchParams({limit: 300, q: $("h-text").value.trim(), severity: $("h-sev").value,
+    kind: $("h-kind").value, open: $("h-open").checked ? "1" : ""});
+  let r;
+  try { r = await api("/api/history?" + params); } catch { return; }
+  if (!r.enabled) {
+    $("history-stats").textContent = "History is turned off (started with --no-db).";
+    rows("history", [], () => "", "Start the monitor without --no-db to keep alert history.", 5);
+    return;
+  }
+  $("history-stats").textContent = `${r.stats.alerts.toLocaleString()} alerts from ${r.stats.sessions} run(s) · ${r.stats.open_high} high not handled`;
+  const sel = $("h-kind"), keep = sel.value, kinds = Object.keys(r.stats.by_kind).sort();
+  if (sel.options.length - 1 !== kinds.length) {
+    sel.innerHTML = `<option value="">All types</option>` + kinds.map((k) => `<option>${esc(k)}</option>`).join("");
+    sel.value = keep;
+  }
+  rows("history", r.alerts, (a) => `<tr class="${a.acked ? "acked" : ""}"><td class="num">${dateTime(a.ts)}</td>
+    <td><span class="sev ${a.severity}">${a.severity}</span></td><td>${esc(a.kind)}</td>
+    <td>${esc(a.message)}${a.acked ? `<div class="muted small">Handled${a.ack_note ? ": " + esc(a.ack_note) : ""}</div>` : ""}</td>
+    <td class="muted small">${esc(a.session_source)}</td></tr>`, "No saved alerts match.", 5);
+}
+["h-text", "h-sev", "h-kind", "h-open"].forEach((id) => $(id).addEventListener("input", () => {
+  clearTimeout(historyTimer); historyTimer = setTimeout(loadHistory, 250);
+}));
+
+// ------------------------------------------------------------------ settings
+const SETTINGS = [
+  ["port_scan_ports", "Port scan: different ports", "How many ports one device may try on another"],
+  ["port_scan_window", "Port scan: time window (s)", ""],
+  ["brute_force_attempts", "Brute force: login attempts", "SSH, RDP, FTP, Telnet, SMB, VNC, databases"],
+  ["brute_force_window", "Brute force: time window (s)", ""],
+  ["syn_flood_count", "SYN flood: connection attempts", "To one device"],
+  ["syn_flood_window", "SYN flood: time window (s)", ""],
+  ["heavy_bytes", "High traffic: bytes sent", "5000000 = 5 MB"],
+  ["heavy_window", "High traffic: time window (s)", ""],
+  ["dns_label_length", "Suspicious DNS: name length", "Characters in one part of a name"],
+  ["dns_entropy", "Suspicious DNS: randomness", "Shannon entropy; words score about 3"],
+  ["dns_entropy_min_length", "Suspicious DNS: min length for randomness", ""],
+  ["beacon_min_connections", "Beaconing: regular connections", "Before alerting"],
+  ["beacon_max_jitter", "Beaconing: timing variation", "0.15 = gaps vary by at most 15%"],
+  ["beacon_min_interval", "Beaconing: minimum gap (s)", ""],
+  ["new_device_warmup", "New device: learning period (s)", "Devices seen later are reported as new"],
+  ["watch_countries", "Watched countries", "Codes like KP,IR (needs update-geoip)"],
+  ["alert_cooldown", "Repeat alerts after (s)", "The same alert is not repeated sooner"],
+];
+let savedConfig = {};
+async function loadSettings() {
+  try { savedConfig = await api("/api/config"); } catch { return; }
+  $("settings").innerHTML = SETTINGS.map(([k, label, help]) => `<label>${esc(label)}
+    <input id="cfg-${k}" value="${esc(savedConfig[k])}" ${k === "watch_countries" ? 'placeholder="none"' : 'inputmode="decimal"'}>
+    ${help ? `<span>${esc(help)}</span>` : ""}<span class="field-error" id="err-${k}"></span></label>`).join("");
+  const s = snap || {}, st = s.status || {};
+  const facts = [["Watching", st.source], ["AI analyst", st.agent],
+    ["Threat intel", s.intel ? `${s.intel.indicators.toLocaleString()} indicators from ${Object.keys(s.intel.lists).length} list(s)` : "off"],
+    ["Machine learning", s.ml ? `${s.ml.state}${s.ml.trained_on ? `, trained on ${s.ml.trained_on} samples` : ""}` : "off"],
+    ["GeoIP", s.geo ? `${s.geo.ranges.toLocaleString()} ranges (${s.geo.attribution})` : "not installed - run update-geoip"],
+    ["History", st.history ? `${st.history.path} · ${st.history.alerts.toLocaleString()} alerts` : "off"]];
+  $("facts").innerHTML = facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v ?? "-")}</dd>`).join("");
+  const n = st.notifications;
+  $("notify").innerHTML = n && n.channels.length
+    ? `<p>Sending <b>${esc(n.min_severity)}+</b> alerts to <b>${esc(n.channels.join(", "))}</b>. Sent ${n.sent}, held back ${n.suppressed} (rate limit).</p>`
+      + (n.errors.length ? `<p class="note">Recent errors:<br>${n.errors.map(esc).join("<br>")}</p>` : "")
+    : `<p class="muted">No notification channels. Start with e.g. <code>--notify-mac</code> or <code>--discord-webhook URL</code> (see README).</p>`;
+  $("notify-test").disabled = !(n && n.channels.length);
+}
+$("settings-reset").onclick = loadSettings;
+$("settings-save").onclick = async () => {
+  const changed = {};
+  SETTINGS.forEach(([k]) => { const v = $("cfg-" + k).value.trim(); if (String(savedConfig[k]) !== v) changed[k] = v; });
+  SETTINGS.forEach(([k]) => $("err-" + k).textContent = "");
+  if (!Object.keys(changed).length) { toast("Nothing changed."); return; }
+  try {
+    const r = await api("/api/config", changed);
+    Object.entries(r.errors || {}).forEach(([k, msg]) => { if ($("err-" + k)) $("err-" + k).textContent = msg; });
+    savedConfig = r.config;
+    toast(Object.keys(r.errors || {}).length ? "Some values were not accepted." : "Settings saved and applied.");
+  } catch (err) { toast(err.message); }
+};
+$("notify-test").onclick = async () => {
+  try { await api("/api/notify/test", {}); toast("Test notification sent."); loadSettings(); }
+  catch (err) { toast(err.message); }
+};
+
+refresh();
+setInterval(refresh, 2000);
 </script>
 </body>
 </html>

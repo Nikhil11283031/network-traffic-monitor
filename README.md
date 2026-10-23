@@ -12,12 +12,19 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 
 **Highlights**
 
-- Six rule-based detectors (port scan, SYN flood, risky ports, data exfiltration, DNS tunnelling, new devices)
+- Nine rule-based detectors: port scan, SYN flood, brute-force logins, ARP spoofing (man-in-the-middle),
+  malware beaconing, risky ports, data exfiltration, DNS tunnelling and new devices
 - Threat intelligence from free public blocklists (abuse.ch Feodo Tracker, Spamhaus DROP, URLhaus domains)
+- GeoIP: the country of every outside server, with alerts for countries you choose to watch
 - Unsupervised ML anomaly detection (Isolation Forest) that learns your network's normal behaviour
 - MITRE ATT&CK technique on every alert, linked to the official description
 - AI analyst agent (Claude, or free and local with Ollama) with a verification safety check
-- 38 automated tests, GitHub Actions CI and a Docker image
+- Responder that proposes firewall rules (macOS pf, Linux iptables, Windows, router) for a person to approve
+- Dashboard controls: live settings, search and filters, mark alerts as handled, upload a capture, export
+  CSV/JSON, PDF incident report
+- Alert history in SQLite, notifications to macOS, Discord, Slack, email or any webhook
+- MCP server, so Claude Desktop and other AI apps can query the monitor
+- 59 automated tests, GitHub Actions CI and a Docker image
 
 ![Dashboard](docs/dashboard.png)
 
@@ -32,10 +39,15 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 | **Suspicious DNS** | Medium | A DNS lookup with a very long (40+ characters) or random-looking name, measured with Shannon entropy. Malware uses this to hide data in DNS (DNS tunnelling) or to find its servers. |
 | **New device** | Low | A device that was not on the local network during the first 30 seconds appears. |
 | **Threat intel** | High | A device talks to, or looks up, an IP address or domain on a threat-intelligence blocklist. |
+| **ARP spoofing** | High | A device claims an IP address (usually the router's) that already belongs to another device's MAC address - the classic way to put yourself in the middle of other people's traffic. |
+| **Brute force** | High | 20+ connection attempts to one login service (SSH, RDP, FTP, Telnet, SMB, VNC, databases) within 60 seconds - password guessing. |
+| **Beaconing** | Medium | A device connects to the same outside server 8+ times at regular intervals (gaps vary by 15% or less) - how malware "calls home" to its command server. |
+| **Watched country** | Medium | A device talks to a server in a country on your watch list (needs the GeoIP database). |
 | **Anomaly (ML)** | Medium | The machine-learning model finds a device behaving unlike anything it learned as normal. |
 
-Repeated alerts for the same thing are grouped (one alert per minute), so the list stays readable. All limits
-are in `Config` in `netmon/analyzer.py` and can be changed.
+Repeated alerts for the same thing are grouped (one alert per minute; beaconing once per 30 minutes), so the
+list stays readable. Every limit can be changed live on the dashboard's **Settings** tab (or in `Config` in
+`netmon/analyzer.py`).
 
 The dashboard also shows packets per second, protocols, the hosts sending and receiving the most data, the
 ports being contacted (risky ones in red), DNS lookups by domain, and every device seen on the local network.
@@ -55,6 +67,9 @@ Every alert is tagged with the matching technique, shown as a link on the dashbo
 | Suspicious DNS | T1071.004 DNS, T1568.002 Domain Generation Algorithms | Command and Control |
 | New device | T1200 Hardware Additions | Initial Access |
 | Threat intel | T1071 Application Layer Protocol | Command and Control |
+| ARP spoofing | T1557.002 Adversary-in-the-Middle: ARP Cache Poisoning | Credential Access |
+| Brute force | T1110 Brute Force | Credential Access |
+| Beaconing | T1071 Application Layer Protocol, T1029 Scheduled Transfer | Command and Control / Exfiltration |
 
 The mapping is the best match for what can be seen in traffic, not proof that the technique was used.
 
@@ -78,6 +93,17 @@ lines), so you can add your own. `intel/demo.txt` lists the documentation-only a
 capture. Re-run `update-intel` regularly; the lists change daily. Use `--intel DIR` or `--no-intel` to change
 or turn off the check.
 
+## GeoIP (country of each connection)
+
+```bash
+python3 -m netmon update-geoip                       # free DB-IP country database (about 5 MB)
+python3 -m netmon pcap capture.pcap --watch-countries KP,IR
+```
+
+The **Top talkers** table then shows each outside server's country, and traffic to a country on your watch
+list raises an alert. Countries can also be changed on the Settings tab. IP geolocation by
+[DB-IP](https://db-ip.com), licensed under CC BY 4.0.
+
 ## Machine-learning anomaly detection
 
 Rules only catch what someone thought of in advance. The ML detector **learns what normal looks like** on
@@ -96,6 +122,86 @@ your network and flags behaviour that does not fit (`netmon/ml.py`):
 
 On the demo capture it flags the intruder, the phone's upload and the TV's DNS leak, and never the normal
 laptop. The dashboard shows whether it is still learning or active. Turn it off with `--no-ml`.
+
+## Dashboard
+
+The dashboard has four tabs:
+
+- **Overview** - live counters, chart, protocols, the alert list with **search, severity and type filters**
+  and a **Handled** button (with an optional note) to mark alerts you have dealt with, the AI analyst, top
+  talkers with country, ports, DNS lookups and devices.
+- **Response** - the responder's proposed actions (see below) to approve or dismiss.
+- **History** - every alert saved in the database across all runs, searchable, with "only not handled".
+- **Settings** - change any detection limit live, see the status of each component, send a test notification.
+
+The toolbar can **analyse a capture file** you pick (it becomes a new session), **export** the alerts as CSV or
+JSON, and download a **PDF incident report** containing the analyst's findings, every alert with its MITRE
+technique, the proposed responses and the devices seen.
+
+## Responder: firewall rules you approve
+
+![Response tab](docs/response.png)
+
+For each incident the responder proposes one concrete action - **isolate** a device on your network, **block** an
+outside server or domain, or **close** a risky port - with the exact command for **macOS (pf)**, **Linux
+(iptables)**, **Windows (PowerShell)** and plain **router** instructions. Approve the ones you agree with and
+download them as one rules file to check and apply.
+
+Nothing is ever applied automatically, on purpose: an attacker can deliberately trigger alerts to make an
+automatic tool block your own router, and a false positive could cut off a family member's laptop. The AI
+analyst can read the proposals (`get_proposed_responses`) and explain which to approve first.
+
+## History and notifications
+
+Alerts are saved to `netmon.db` (SQLite) as they happen, so they survive restarts. Browse them on the History tab
+or in the terminal:
+
+```bash
+python3 -m netmon history --severity high --open      # high alerts not yet marked as handled
+```
+
+Get told about serious alerts without watching the dashboard:
+
+```bash
+python3 -m netmon pcap capture.pcap --notify-mac                        # macOS notification
+sudo .venv/bin/python -m netmon live --discord-webhook https://discord.com/api/webhooks/...
+python3 -m netmon pcap capture.pcap --slack-webhook https://hooks.slack.com/services/...
+python3 -m netmon pcap capture.pcap --webhook https://example.com/hook --notify-min medium
+NETMON_SMTP_HOST=smtp.gmail.com NETMON_SMTP_USER=you@gmail.com NETMON_SMTP_PASSWORD=app-password \
+  python3 -m netmon pcap capture.pcap --email-to you@gmail.com
+```
+
+Only alerts at or above `--notify-min` (default high) are sent, at most once per alert type and device every 5
+minutes and no more than 10 a minute, so an attack cannot flood your phone.
+
+## MCP server (use the monitor from Claude Desktop)
+
+The [Model Context Protocol](https://modelcontextprotocol.io) lets AI apps use outside tools. While the dashboard
+is running, `python3 -m netmon mcp` gives any MCP client the analyst's read-only tools. For Claude Desktop, add
+this to `claude_desktop_config.json` (Settings > Developer > Edit Config), using your own paths:
+
+```json
+{
+  "mcpServers": {
+    "network-monitor": {
+      "command": "/Users/you/network-traffic-monitor/.venv/bin/python",
+      "args": ["-m", "netmon", "mcp"],
+      "cwd": "/Users/you/network-traffic-monitor"
+    }
+  }
+}
+```
+
+Then ask Claude things like *"Use the network monitor: what is the most serious alert and what should I do?"*.
+
+## Security of the dashboard itself
+
+- It listens on `127.0.0.1` only, so other devices cannot open it.
+- Requests addressed to any other host name are refused, which blocks DNS-rebinding attacks from websites.
+- Every request that changes something must carry an `X-Netmon` header, which other websites cannot add, so a page
+  you visit cannot approve responses, change settings or upload files behind your back (CSRF).
+- CSV exports neutralise spreadsheet formulas, because alert text (domain names) comes from the network.
+- Uploaded files are saved under a fixed name in a temporary folder, never under the name the browser sent.
 
 ## AI security analyst agent
 
@@ -180,8 +286,9 @@ python3 -m netmon pcap samples/demo.pcap --speed 5  # replays it 5x faster
 ```
 
 Open <http://127.0.0.1:5050>. Over about 20 seconds you will see normal traffic, then an unknown device join
-the network, port-scan a laptop, try Telnet on the router, a smart TV leak data through DNS, and a phone upload
-6 MB to an outside server. Each one appears as an alert.
+the network, port-scan a laptop, try Telnet on the router, pretend to be the router (ARP spoofing) and guess the
+laptop's SSH password, a smart TV "call home" every 10 seconds and leak data through DNS, and a phone upload 6 MB
+to an outside server. Each one appears as an alert.
 
 **2. Watch your own network live**
 
@@ -203,8 +310,9 @@ python3 -m netmon pcap mycapture.pcap                # instant analysis + dashbo
 python3 -m netmon pcap mycapture.pcap --no-web --report report.json   # console only, save a JSON report
 ```
 
-Other options: `--port 5051` to change the dashboard port, `--no-web` for console-only output,
-`--no-intel`, `--no-ml`, `--ml-learn SECONDS`.
+Other options: `--port 5051`, `--no-web` (console only), `--no-intel`, `--no-ml`, `--ml-learn SECONDS`,
+`--db FILE` / `--no-db`, `--pdf report.pdf` (write a PDF report at the end), `--watch-countries KP,IR`.
+Run `python3 -m netmon pcap --help` for the full list.
 
 **4. With Docker**
 
@@ -235,7 +343,10 @@ Docker runs inside a virtual machine, so live capture in a container only sees t
   based on each packet's own timestamp, so a saved capture gives exactly the same results as watching live.
 - `netmon/web.py` serves the dashboard; the page asks for a fresh snapshot every two seconds.
 - `netmon/mitre.py` maps alerts to MITRE ATT&CK; `netmon/threatintel.py` loads and matches blocklists;
-  `netmon/ml.py` is the Isolation Forest anomaly detector.
+  `netmon/geoip.py` looks up countries; `netmon/ml.py` is the Isolation Forest anomaly detector.
+- `netmon/monitor.py` ties a session together; `netmon/store.py` is the SQLite history; `netmon/notify.py`
+  sends notifications; `netmon/responder.py` proposes firewall rules; `netmon/report.py` builds the PDF;
+  `netmon/mcp_server.py` is the MCP server.
 - `netmon/agent.py` is the AI analyst; it reads the same analyser through read-only tools.
 - Capture runs in a background thread; a lock keeps the statistics consistent while the dashboard reads them.
 
@@ -260,8 +371,9 @@ fallback, bad tool input, clipping of long attacker-controlled strings, and the 
 - Rules are thresholds, so a slow scan spread over minutes is not caught. The ML detector helps, but it
   only knows what it saw while learning; if an attack is already happening then, it is learned as normal.
 - Blocklists only know about servers that have already been reported.
-- Ideas: save alerts to a database for history, send notifications (email, Slack, phone), run at startup as a
-  service, export alerts to a SIEM (Splunk, Elastic), expose the tools to other AI apps as an MCP server.
+- ARP spoofing detection can also fire when a device legitimately gets a new network card or address.
+- Ideas: run at startup as a service, export alerts to a SIEM (Splunk, Elastic), TLS fingerprinting (JA3) to
+  recognise malware inside encrypted traffic.
 
 ## Ethics
 

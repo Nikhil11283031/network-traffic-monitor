@@ -75,6 +75,27 @@ PLAYBOOKS = {
         "Block the listed address or domain on the router or firewall.",
         "Change passwords that were used on the device, from a different, clean device.",
     ],
+    "ARP spoofing": [
+        "Find the device with that MAC address and disconnect it from the network immediately.",
+        "Assume traffic sent while it was active may have been read: change passwords used during that time.",
+        "Turn on ARP protection (often called 'ARP inspection' or 'anti-spoofing') on the router if available.",
+        "Use HTTPS and a VPN on untrusted networks so intercepted traffic stays unreadable.",
+    ],
+    "Brute force": [
+        "Block the source address on the target or the router.",
+        "Make sure the targeted account uses a long, unique password, or turn password login off (SSH keys).",
+        "Turn on account lockout or a tool like fail2ban that blocks repeated failed logins.",
+        "Check the target's login logs to see whether any attempt succeeded.",
+    ],
+    "Beaconing": [
+        "Find which app on the device makes these connections (Activity Monitor / netstat / router logs).",
+        "Look up the destination address; if it is not a service you use, treat the device as infected.",
+        "Block the destination on the router and scan the device for malware.",
+    ],
+    "Watched country": [
+        "Check whether anyone on the device expected to use a service in that country.",
+        "If not, block the destination and look at what the device sent there.",
+    ],
     "Anomaly (ML)": [
         "Look at what the device was doing at that time (the reasons say which behaviour was unusual).",
         "If there is an innocent explanation (a backup, a game download, a new app), no action is needed.",
@@ -107,7 +128,9 @@ only describe them.
 - Mention the MITRE ATT&CK technique IDs given with each incident (e.g. T1046) - security teams use them.
 - "Threat intel" means the device talked to a server on a public blocklist of known-bad hosts: treat it as
   the most serious kind of finding. "Anomaly (ML)" comes from a machine-learning model that learned normal
-  behaviour; its reasons explain what was unusual.
+  behaviour; its reasons explain what was unusual. "ARP spoofing" means a device is impersonating another
+  (usually the router) to intercept traffic; "Brute force" is password guessing; "Beaconing" is a device
+  contacting the same server on a fixed timer, typical of malware.
 
 Report format (Markdown) - always include all three sections:
 ## Summary
@@ -163,12 +186,18 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {"alert_type": {"type": "string",
                          "enum": list(PLAYBOOKS)}}, "required": ["alert_type"]},
     },
+    {
+        "name": "get_proposed_responses",
+        "description": "Defensive actions the responder proposes for the current alerts (block an outside server, "
+                       "isolate a device, close a port, block a domain) and whether a person has approved them.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
 ]
 
 
 # Within the same severity, the order incidents are reported in (most telling first).
-KIND_PRIORITY = ["Threat intel", "Port scan", "SYN flood", "High traffic", "Suspicious DNS", "Risky port",
-                 "Anomaly (ML)", "New device"]
+KIND_PRIORITY = ["Threat intel", "ARP spoofing", "Brute force", "Port scan", "SYN flood", "High traffic",
+                 "Beaconing", "Suspicious DNS", "Risky port", "Watched country", "Anomaly (ML)", "New device"]
 
 
 def incident_summary(alerts: list) -> list:
@@ -214,8 +243,17 @@ def _when(ts):
 class Toolbox:
     """The tools the agent can call. All read-only."""
 
-    def __init__(self, analyzer: Analyzer):
+    def __init__(self, analyzer: Analyzer, responder=None):
         self.analyzer = analyzer
+        self.responder = responder
+
+    def tool_get_proposed_responses(self):
+        if self.responder is None:
+            return {"responses": [], "note": "The responder is not enabled."}
+        return {"responses": [{"title": r["title"], "severity": r["severity"], "status": r["status"],
+                               "reason": r["reason"], "router_instructions": r["commands"]["router"]}
+                              for r in self.responder.propose(self.analyzer)],
+                "note": "Nothing is applied automatically; a person approves and applies each action."}
 
     def run(self, name: str, args: dict) -> dict:
         handler = getattr(self, f"tool_{name}", None)
@@ -345,9 +383,10 @@ class SecurityAnalystAgent:
     (free, local), otherwise the offline rule-based analyst. NETMON_PROVIDER=claude|ollama|offline forces one."""
 
     def __init__(self, analyzer: Analyzer, client=None, model: str = DEFAULT_MODEL, max_steps: int = MAX_STEPS,
-                 ollama: OllamaClient | None = None):
+                 ollama: OllamaClient | None = None, responder=None):
         self.analyzer = analyzer
-        self.toolbox = Toolbox(analyzer)
+        self.toolbox = Toolbox(analyzer, responder)
+        self.last_result: AgentResult | None = None  # the latest investigation, used for the PDF report
         self.model = model
         self.max_steps = max_steps
         self.client = client
@@ -406,7 +445,10 @@ class SecurityAnalystAgent:
     def _run(self, request: str) -> AgentResult:
         self.progress = {"running": True, "started": time.time(), "phase": "Starting", "steps": []}
         try:
-            return self._run_inner(request)
+            result = self._run_inner(request)
+            if "incident report" in request.lower():
+                self.last_result = result
+            return result
         finally:
             self.progress["running"] = False
 
@@ -497,6 +539,10 @@ TYPE_KEYWORDS = {
     "Risky port": ("risky port", "telnet", "ftp", "rdp", "remote desktop", "smb", "vnc", "unencrypted",
                    "backdoor", "irc", "sql server"),
     "New device": ("new device", "joined", "unknown device"),
+    "ARP spoofing": ("arp", "spoof", "man-in-the-middle", "impersonat", "claims to be"),
+    "Brute force": ("brute", "password", "login attempt", "guess"),
+    "Beaconing": ("beacon", "calls home", "calling home", "regular interval", "every "),
+    "Watched country": ("country", "watch list"),
     "Anomaly (ML)": ("anomal", "machine learning", "unusual"),
 }
 

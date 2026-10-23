@@ -26,6 +26,9 @@ TECHNIQUES = {
     "T1200": ("Hardware Additions", "Initial Access"),
     "T1071": ("Application Layer Protocol", "Command and Control"),
     "T1190": ("Exploit Public-Facing Application", "Initial Access"),
+    "T1557.002": ("Adversary-in-the-Middle: ARP Cache Poisoning", "Credential Access"),
+    "T1110": ("Brute Force", "Credential Access"),
+    "T1029": ("Scheduled Transfer", "Exfiltration"),
 }
 
 # Risky ports -> the technique that service is usually abused for.
@@ -47,6 +50,10 @@ KIND_TECHNIQUES = {
     "Suspicious DNS": ["T1071.004", "T1568.002"],
     "New device": ["T1200"],
     "Threat intel": ["T1071"],
+    "ARP spoofing": ["T1557.002"],
+    "Brute force": ["T1110"],
+    "Beaconing": ["T1071", "T1029"],
+    "Watched country": [],
     "Anomaly (ML)": [],  # an anomaly is "something unusual", not a specific technique
 }
 

@@ -16,7 +16,8 @@ def to_packet_info(pkt) -> PacketInfo | None:
     mac = pkt[Ether].src if Ether in pkt else None
 
     if ARP in pkt:
-        return PacketInfo(ts, pkt[ARP].psrc, pkt[ARP].pdst, "ARP", length, src_mac=mac)
+        # The MAC inside the ARP message is the one the sender claims for its IP address.
+        return PacketInfo(ts, pkt[ARP].psrc, pkt[ARP].pdst, "ARP", length, src_mac=pkt[ARP].hwsrc or mac)
 
     if IP in pkt:
         src, dst = pkt[IP].src, pkt[IP].dst
