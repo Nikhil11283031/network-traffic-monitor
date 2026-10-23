@@ -118,7 +118,7 @@ def test_web_endpoints(analyzer):
     client = FakeClient([([text("All quiet.")], "end_turn")])
     app = create_app(analyzer, "test", SecurityAnalystAgent(analyzer, client=client)).test_client()
     h = {"X-Netmon": "1"}
-    assert b"AI security analyst" in app.get("/").data
+    assert b"Ask the security analyst" in app.get("/").data
     assert app.post("/api/agent/ask", json={"question": ""}, headers=h).status_code == 400
     r = app.post("/api/agent/ask", json={"question": "Anything wrong?"}, headers=h).get_json()
     assert r["report"] == "All quiet." and r["mode"] == "ai"

@@ -440,6 +440,15 @@ class Analyzer:
                 "alerts": [asdict(a) for a in self.alerts if ip in (a.source, a.target.split(":")[0])],
             }
 
+    def _links(self, limit: int = 40) -> list[dict]:
+        """Who talks to whom (both directions added together), largest first - for the network map."""
+        pairs: Counter = Counter()
+        for src, peers in self.host_peers.items():
+            for dst, n in peers.items():
+                if src != dst and (is_local(src) or is_local(dst)):
+                    pairs[tuple(sorted((src, dst)))] += n
+        return [{"a": a, "b": b, "bytes": n} for (a, b), n in pairs.most_common(limit)]
+
     def snapshot(self, timeline_seconds: int = 60) -> dict:
         with self.lock:
             end = int(self.last_ts or 0)
@@ -461,6 +470,7 @@ class Analyzer:
                               for port, n in self.dst_ports.most_common(8)],
                 "dns": [{"domain": d, "count": n} for d, n in self.dns_domains.most_common(8)],
                 "devices": sorted(self.devices.values(), key=lambda d: d["first_seen"]),
+                "links": self._links(),
                 "alert_counts": dict(Counter(a.severity for a in self.alerts)),
                 "intel": self.intel.summary() if self.intel is not None else None,
                 "ml": self.ml.status() if self.ml is not None else None,
