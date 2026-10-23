@@ -177,3 +177,14 @@ def test_agent_sees_mitre_intel_and_ml():
     report = OfflineAnalyst(a).answer("Investigate").report
     assert "### Threat intel - High" in report and "`T1046` Network Service Discovery" in report
     json.dumps(a.snapshot())  # the dashboard API can serialise everything
+
+
+def test_ml_handles_out_of_order_packets_without_rescoring():
+    from netmon.ml import AnomalyDetector
+
+    det = AnomalyDetector(window=5, learn_seconds=10, min_samples=2)
+    for i in range(400):  # timestamps jitter back and forth across window boundaries
+        t = T0 + i * 0.1 + (0.3 if i % 2 else -0.3)
+        det.observe(PacketInfo(t, "192.168.1.10", "52.1.1.1", "TCP", 60, 1000 + i, 443, "S"))
+    windows = int((400 * 0.1) // 5)
+    assert det.status()["windows_scored"] <= windows  # one score per window per device, not one per jitter

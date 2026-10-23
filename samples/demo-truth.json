@@ -1,0 +1,106 @@
+{
+  "description": "Answer key for samples/demo.pcap (see the timeline in make_sample_pcap.py).",
+  "episodes": [
+    {
+      "name": "Port scan of the laptop",
+      "start": 1792000045,
+      "end": 1792000050,
+      "attackers": [
+        "192.168.1.99"
+      ],
+      "victims": [
+        "192.168.1.10"
+      ],
+      "expected": [
+        "Port scan"
+      ]
+    },
+    {
+      "name": "Telnet login attempt on the router",
+      "start": 1792000055,
+      "end": 1792000055,
+      "attackers": [
+        "192.168.1.99"
+      ],
+      "victims": [
+        "192.168.1.1"
+      ],
+      "expected": [
+        "Risky port"
+      ]
+    },
+    {
+      "name": "ARP spoofing (pretending to be the router)",
+      "start": 1792000057,
+      "end": 1792000058,
+      "attackers": [
+        "192.168.1.99"
+      ],
+      "victims": [
+        "192.168.1.1",
+        "192.168.1.10"
+      ],
+      "expected": [
+        "ARP spoofing"
+      ]
+    },
+    {
+      "name": "SSH password guessing",
+      "start": 1792000058,
+      "end": 1792000064,
+      "attackers": [
+        "192.168.1.99"
+      ],
+      "victims": [
+        "192.168.1.10"
+      ],
+      "expected": [
+        "Brute force"
+      ]
+    },
+    {
+      "name": "Smart TV beaconing to its server",
+      "start": 1792000003,
+      "end": 1792000083,
+      "attackers": [
+        "192.168.1.12"
+      ],
+      "victims": [
+        "198.51.100.23"
+      ],
+      "expected": [
+        "Beaconing"
+      ]
+    },
+    {
+      "name": "DNS tunnelling from the smart TV",
+      "start": 1792000060,
+      "end": 1792000066,
+      "attackers": [
+        "192.168.1.12"
+      ],
+      "victims": [
+        "192.168.1.1"
+      ],
+      "expected": [
+        "Suspicious DNS",
+        "Threat intel"
+      ]
+    },
+    {
+      "name": "6 MB upload to an outside server",
+      "start": 1792000070,
+      "end": 1792000078,
+      "attackers": [
+        "192.168.1.11"
+      ],
+      "victims": [
+        "203.0.113.50"
+      ],
+      "expected": [
+        "High traffic",
+        "Threat intel"
+      ]
+    }
+  ]
+}

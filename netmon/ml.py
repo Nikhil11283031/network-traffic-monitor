@@ -70,9 +70,13 @@ class AnomalyDetector:
             self.start = p.ts
         bucket = int((p.ts - self.start) // self.window)
         found = []
-        if self.bucket is not None and bucket != self.bucket:
+        if self.bucket is None:
+            self.bucket = bucket
+        elif bucket > self.bucket:  # only move forward: slightly out-of-order packets join the current window
             found = self._close_window()
-        self.bucket = bucket
+            self.bucket = bucket
+        elif bucket < self.bucket - 1:  # far out of order (a badly sorted file): leave it out of the ML features
+            return found
         if is_local(p.src):
             f = self.current.setdefault(p.src, {"packets_out": 0, "bytes_out": 0, "peers": set(), "ports": set(),
                                                 "conn_attempts": 0, "dns_queries": 0, "dns_max_len": 0,
@@ -113,9 +117,13 @@ class AnomalyDetector:
                 return []
             self._train()
         found = []
-        for host, vec in vectors.items():
+        if not vectors:
+            return found
+        hosts = list(vectors)
+        scores = self.model.decision_function([self._log(vectors[h]) for h in hosts])  # one call per window
+        for host, raw in zip(hosts, scores):
             self.scored += 1
-            score = float(self.model.decision_function([self._log(vec)])[0])
+            vec, score = vectors[host], float(raw)
             reasons = self._reasons(vec)
             if score < self.score_threshold and reasons:
                 found.append({"host": host, "ts": window_end, "score": round(score, 3), "reasons": reasons,

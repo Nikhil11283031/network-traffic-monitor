@@ -10,7 +10,7 @@ Timeline (seconds from the start):
     55     it tries to log in to the router with Telnet
     57     it sends fake ARP replies claiming to be the router (ARP spoofing / man-in-the-middle)
     58-64  it tries to guess the laptop's SSH password (30 login attempts)
-    3-83   the smart TV quietly "calls home" to a server every 10 seconds (beaconing)
+    3-83   the smart TV quietly "calls home" to a server every 8 seconds (beaconing)
     60-66  the smart TV looks up random-looking names (DNS tunnelling)
     70-78  the phone uploads 6 MB to an outside server (possible data theft)
 """
@@ -66,9 +66,9 @@ def main(out="samples/demo.pcap"):
     arp.time = START + 1.0
     packets.append(arp)
 
-    # 3-83 s: the TV connects to the same outside server every 10 seconds (malware beacon).
-    for i in range(9):
-        t = 3.0 + i * 10 + rng.uniform(-0.3, 0.3)
+    # 3-83 s: the TV connects to the same outside server every 8 seconds (malware beacon).
+    for i in range(11):
+        t = 3.0 + i * 8 + rng.uniform(-0.3, 0.3)
         packets.append(pkt(t, TV, "198.51.100.23", TCP(sport=45000 + i, dport=443, flags="S")))
         packets.append(pkt(t + 0.05, TV, "198.51.100.23", TCP(sport=45000 + i, dport=443, flags="A"), b"b" * 90))
 

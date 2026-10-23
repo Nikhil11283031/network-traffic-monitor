@@ -7,6 +7,7 @@
     python3 -m netmon update-geoip                           download the free country database
     python3 -m netmon history --severity high                show saved alerts from earlier runs
     python3 -m netmon mcp                                    MCP server for Claude Desktop and other AI apps
+    python3 -m netmon benchmark Friday.pcap --truth cicids2017-friday   accuracy on a public dataset
 
 Notifications: --notify-mac, --discord-webhook URL, --slack-webhook URL, --webhook URL, --email-to ADDRESS
 (email uses NETMON_SMTP_HOST / _PORT / _USER / _PASSWORD / _FROM).
@@ -70,6 +71,18 @@ def build_parser() -> argparse.ArgumentParser:
     hist.add_argument("--search", help="text to look for in the alert")
     hist.add_argument("--open", action="store_true", help="only alerts not yet marked as handled")
     hist.add_argument("--limit", type=int, default=50)
+    bench = sub.add_parser("benchmark", help="measure accuracy on a labelled capture (e.g. CIC-IDS2017)")
+    bench.add_argument("path", help="the .pcap/.pcapng capture")
+    bench.add_argument("--truth", required=True,
+                       help="answer key: cicids2017-monday (no attacks), -tuesday, -wednesday, -thursday, -friday, a .json file or a "
+                            "UNSW-NB15 ground-truth .csv")
+    bench.add_argument("--utc-offset", type=float, default=None,
+                       help="time zone of the answer key in hours (CIC-IDS2017 default: -3)")
+    bench.add_argument("--out", default="benchmark-results", help="folder for the report (default benchmark-results/)")
+    bench.add_argument("--intel", default="intel")
+    bench.add_argument("--no-ml", action="store_true")
+    bench.add_argument("--ml-learn", type=float, default=600,
+                       help="seconds of traffic the ML model learns from (default 600)")
     mcp = sub.add_parser("mcp", help="run an MCP server (stdio) for Claude Desktop and other AI apps")
     mcp.add_argument("--url", default="http://127.0.0.1:5050", help="address of the running dashboard")
 
@@ -99,6 +112,40 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--investigate", action="store_true",
                        help="when finished, have the AI analyst write an incident report")
     return parser
+
+
+def run_benchmark(args) -> int:
+    from pathlib import Path
+
+    from .analyzer import Analyzer
+    from .benchmark import load_truth, markdown, run
+    from .capture import have_dpkt
+    from .threatintel import ThreatIntel
+
+    truth = load_truth(args.truth, args.utc_offset)
+    print(f"Answer key: {len(truth)} attack(s) from {args.truth}")
+    if not have_dpkt():
+        print("Tip: pip install dpkt makes reading large captures about 10 times faster.")
+    ml = None
+    if not args.no_ml:
+        from .ml import AnomalyDetector
+
+        ml = AnomalyDetector(learn_seconds=args.ml_learn)
+        ml = None if ml.error else ml
+    analyzer = Analyzer(intel=ThreatIntel().load_dir(args.intel), ml=ml)
+    started = time.time()
+    result = run(args.path, truth, analyzer,
+                 progress=lambda n: print(f"  {n:,} packets ({n / max(time.time() - started, 1e-6):,.0f}/s)", flush=True))
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    stem = Path(args.path).stem
+    title = f"Benchmark: {stem} ({args.truth})"
+    (out / f"{stem}.md").write_text(markdown(result, title))
+    (out / f"{stem}.json").write_text(json.dumps(result, indent=2, default=str))
+    print()
+    print(markdown(result, title))
+    print(f"Saved {out / (stem + '.md')} and {out / (stem + '.json')}")
+    return 0
 
 
 def run_history(args) -> int:
@@ -136,6 +183,8 @@ def main(argv=None):
         return 0
     if args.mode == "history":
         return run_history(args)
+    if args.mode == "benchmark":
+        return run_benchmark(args)
     if args.mode == "mcp":
         from .mcp_server import MCPServer
 

@@ -7,6 +7,7 @@ timestamps, so replaying a capture file gives the same alerts as watching it liv
 
 from __future__ import annotations
 
+import functools
 import ipaddress
 import math
 import statistics
@@ -64,7 +65,7 @@ class Config:
     new_device_warmup: float = 30.0  # devices seen after this point are reported as new
     brute_force_attempts: int = 20  # connection attempts to one login service ...
     brute_force_window: float = 60.0  # ... within this many seconds
-    beacon_min_connections: int = 8  # regular connections to the same outside server ...
+    beacon_min_connections: int = 10  # regular connections to the same outside server ...
     beacon_max_jitter: float = 0.15  # ... whose gaps vary by at most 15% ...
     beacon_min_interval: float = 5.0  # ... and are at least this many seconds apart
     watch_countries: str = ""  # comma-separated country codes to alert on, e.g. "KP,IR" (needs GeoIP data)
@@ -131,6 +132,7 @@ def base_domain(name: str) -> str:
 LOCAL_NETWORKS = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")]
 
 
+@functools.lru_cache(maxsize=65536)
 def is_local(ip: str) -> bool:
     try:
         addr = ipaddress.ip_address(ip)
@@ -146,15 +148,21 @@ class _Window:
         self.seconds = seconds
         self.items: deque[tuple[float, object, int]] = deque()
         self.total = 0
+        self.keys: Counter = Counter()  # how often each key is in the window, so distinct_keys() is O(1)
 
     def add(self, ts: float, key=None, amount: int = 1):
         self.items.append((ts, key, amount))
         self.total += amount
+        self.keys[key] += 1
         while self.items and self.items[0][0] < ts - self.seconds:
-            self.total -= self.items.popleft()[2]
+            _, old, n = self.items.popleft()
+            self.total -= n
+            self.keys[old] -= 1
+            if not self.keys[old]:
+                del self.keys[old]
 
     def distinct_keys(self) -> int:
-        return len({key for _, key, _ in self.items})
+        return len(self.keys)
 
 
 class Analyzer:

@@ -24,7 +24,9 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
   CSV/JSON, PDF incident report
 - Alert history in SQLite, notifications to macOS, Discord, Slack, email or any webhook
 - MCP server, so Claude Desktop and other AI apps can query the monitor
-- 59 automated tests, GitHub Actions CI and a Docker image
+- Accuracy benchmark against public datasets (CIC-IDS2017, UNSW-NB15) with detection rate, time to detect,
+  precision and false alarms per hour
+- 66 automated tests, GitHub Actions CI and a Docker image
 
 ![Dashboard](docs/dashboard.png)
 
@@ -41,7 +43,7 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 | **Threat intel** | High | A device talks to, or looks up, an IP address or domain on a threat-intelligence blocklist. |
 | **ARP spoofing** | High | A device claims an IP address (usually the router's) that already belongs to another device's MAC address - the classic way to put yourself in the middle of other people's traffic. |
 | **Brute force** | High | 20+ connection attempts to one login service (SSH, RDP, FTP, Telnet, SMB, VNC, databases) within 60 seconds - password guessing. |
-| **Beaconing** | Medium | A device connects to the same outside server 8+ times at regular intervals (gaps vary by 15% or less) - how malware "calls home" to its command server. |
+| **Beaconing** | Medium | A device connects to the same outside server 10+ times at regular intervals (gaps vary by 15% or less) - how malware "calls home" to its command server. Ten, not eight, because the benchmark showed random traffic occasionally looks regular for eight connections. |
 | **Watched country** | Medium | A device talks to a server in a country on your watch list (needs the GeoIP database). |
 | **Anomaly (ML)** | Medium | The machine-learning model finds a device behaving unlike anything it learned as normal. |
 
@@ -287,7 +289,7 @@ python3 -m netmon pcap samples/demo.pcap --speed 5  # replays it 5x faster
 
 Open <http://127.0.0.1:5050>. Over about 20 seconds you will see normal traffic, then an unknown device join
 the network, port-scan a laptop, try Telnet on the router, pretend to be the router (ARP spoofing) and guess the
-laptop's SSH password, a smart TV "call home" every 10 seconds and leak data through DNS, and a phone upload 6 MB
+laptop's SSH password, a smart TV "call home" every 8 seconds and leak data through DNS, and a phone upload 6 MB
 to an outside server. Each one appears as an alert.
 
 **2. Watch your own network live**
@@ -349,6 +351,50 @@ Docker runs inside a virtual machine, so live capture in a container only sees t
   `netmon/mcp_server.py` is the MCP server.
 - `netmon/agent.py` is the AI analyst; it reads the same analyser through read-only tools.
 - Capture runs in a background thread; a lock keeps the statistics consistent while the dashboard reads them.
+
+## Accuracy benchmark
+
+Claims about detection mean nothing without numbers, so the monitor can score itself against public datasets of
+real, labelled attacks:
+
+```bash
+python3 -m netmon benchmark Friday-WorkingHours.pcap --truth cicids2017-friday
+```
+
+It replays the whole capture, compares every alert with the answer key and writes a report (Markdown and JSON in
+`benchmark-results/`) with:
+
+- **Detection rate**: how many attacks raised at least one alert, and how many were caught by the detector built
+  for that kind of attack.
+- **Time to detect** for each attack.
+- **Precision and false alarms per hour**, overall and for each detector, with examples of the false alarms.
+- **Speed** in packets per second.
+
+Attacks that can only be seen inside packet contents (SQL injection, cross-site scripting, Heartbleed, exploits)
+are listed as out of scope instead of being hidden: this monitor looks at who talks to whom, how much and when,
+not at the contents.
+
+**Answer keys**
+
+| `--truth` | Dataset |
+| --- | --- |
+| `cicids2017-monday` ... `cicids2017-friday` | [CIC-IDS2017](https://www.unb.ca/cic/datasets/ids-2017.html), built in from the official attack schedule (Monday has no attacks, so it measures false alarms on normal traffic) |
+| `UNSW-NB15_GT.csv` | [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset) ground-truth file |
+| `my-attacks.json` | Your own: `{"episodes": [{"name", "start", "end", "attackers": [...], "victims": [...], "expected": [...]}]}` |
+
+**Running it on CIC-IDS2017**
+
+1. Download the PCAPs from the dataset's download page (linked from the CIC page above). Each day is one large file
+   (roughly 8 to 13 GB).
+2. Run one day at a time, for example
+   `python3 -m netmon benchmark Tuesday-WorkingHours.pcap --truth cicids2017-tuesday`.
+   The fast reader (`dpkt`) processes about 20,000 to 30,000 packets per second on a laptop, so a day takes
+   minutes rather than hours.
+3. Read `benchmark-results/Tuesday-WorkingHours.md`. Change limits on the Settings tab (or in `Config`) and run it
+   again to see the effect - but tune on one day and report the results of the others, so the numbers stay honest.
+
+`samples/demo-truth.json` is the answer key for the demo capture; `python3 -m netmon benchmark samples/demo.pcap
+--truth samples/demo-truth.json --ml-learn 40` checks the scoring itself (7 of 7 attacks, no false alarms).
 
 ## Tests and CI
 

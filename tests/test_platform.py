@@ -122,7 +122,7 @@ def test_upload_starts_a_new_session(monitor, client):
             break
         time.sleep(0.1)
     snap = client.get("/api/snapshot").get_json()
-    assert snap["packets"] == 6260 and snap["status"]["source"] == "upload: office.pcap"
+    assert snap["packets"] == 6264 and snap["status"]["source"] == "upload: office.pcap"
     assert monitor.store.stats()["sessions"] == 2
 
 
