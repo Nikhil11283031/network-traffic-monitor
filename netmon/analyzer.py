@@ -83,12 +83,17 @@ def base_domain(name: str) -> str:
     return ".".join(parts[-keep:])
 
 
+# Address ranges used inside home and office networks (RFC 1918 for IPv4, unique local for IPv6).
+# Python's is_private is not used because it also counts documentation and other reserved ranges.
+LOCAL_NETWORKS = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")]
+
+
 def is_local(ip: str) -> bool:
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return False
-    return addr.is_private and not addr.is_loopback and not addr.is_multicast and not addr.is_link_local
+    return any(addr in net for net in LOCAL_NETWORKS)
 
 
 class _Window:
@@ -195,9 +200,11 @@ class Analyzer:
         window = self._volume[p.src]
         window.add(p.ts, amount=p.length)
         if window.total >= self.config.heavy_bytes:
+            top_dst, top_bytes = self.host_peers[p.src].most_common(1)[0]
+            where = "outside your network" if not is_local(top_dst) else "on your network"
             self._alert(new_alerts, p.ts, "medium", "High traffic", p.src, "any",
                         f"{p.src} sent {window.total / 1_000_000:.1f} MB in "
-                        f"{self.config.heavy_window:g} seconds.")
+                        f"{self.config.heavy_window:g} seconds, mostly to {top_dst} ({where}).")
 
         # Suspicious DNS: very long or random-looking names can hide data (DNS tunnelling) or
         # come from malware that generates domain names.

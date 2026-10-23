@@ -95,6 +95,7 @@ def test_heavy_upload():
     _, alerts = run(upload)
     assert kinds(alerts) == ["High traffic"]
     assert alerts[0].source == "192.168.1.11"
+    assert "mostly to 203.0.113.50 (outside your network)" in alerts[0].message
 
 
 def test_new_device_only_after_warmup():
@@ -118,6 +119,12 @@ def test_base_domain():
     from netmon.analyzer import base_domain
     assert base_domain("www.uow.edu.au.") == "uow.edu.au"
     assert base_domain("mail.google.com") == "google.com"
+
+
+def test_is_local():
+    from netmon.analyzer import is_local
+    assert is_local("192.168.1.10") and is_local("10.1.2.3") and is_local("172.20.0.5")
+    assert not is_local("203.0.113.50") and not is_local("8.8.8.8") and not is_local("127.0.0.1")
 
 
 def test_entropy():

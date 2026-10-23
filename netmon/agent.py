@@ -467,6 +467,8 @@ def add_missing_incidents(report: str, alerts: list) -> tuple[str, list]:
         extra += [f"### {g['type']} - {g['severity'].capitalize()}",
                   f"- {g['example']}" + (f" ({g['count']} alerts)" if g["count"] > 1 else "")]
         extra += [f"  - {step}" for step in PLAYBOOKS.get(g["type"], [])[:2]]
+    if any(g["severity"] == "high" for g in missing):
+        extra += ["", "**Because of this, the overall risk is High**, whatever the summary above says."]
     return report.rstrip() + "\n" + "\n".join(extra), missing
 
 

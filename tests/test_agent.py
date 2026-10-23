@@ -211,6 +211,7 @@ def test_safety_check_adds_incidents_the_model_missed(analyzer):
     assert "Also detected (added by the safety check" in result.report
     assert "Port scan - High" in result.report
     assert "safety check added" in result.note
+    assert "overall risk is High" in result.report
     # A question is answered as asked, without the check.
     ollama2 = FakeOllama([{"role": "assistant", "content": "It scanned ports."}])
     assert SecurityAnalystAgent(analyzer, ollama=ollama2).ask("What did it do?").report == "It scanned ports."
