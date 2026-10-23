@@ -24,8 +24,12 @@ FEEDS = {
               "abuse.ch Feodo Tracker - botnet command-and-control servers"),
     "spamhaus-drop": ("https://www.spamhaus.org/drop/drop_v4.json",
                       "Spamhaus DROP - hijacked and criminal networks"),
-    "urlhaus": ("https://urlhaus.abuse.ch/downloads/hostfile/",
-                "abuse.ch URLhaus - hosts spreading malware"),
+    # abuse.ch retired its URLhaus hosts file (HTTP 410), so use the malware-filter project's domain list built
+    # from URLhaus data. Several mirrors are tried in order.
+    "urlhaus": (["https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt",
+                 "https://curbengh.github.io/malware-filter/urlhaus-filter-hosts-online.txt",
+                 "https://malware-filter.pages.dev/urlhaus-filter-hosts-online.txt"],
+                "URLhaus (via malware-filter) - domains spreading malware"),
 }
 
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$")
@@ -154,19 +158,24 @@ def update_feeds(folder: str | Path = "intel", feeds: dict | None = None, timeou
     folder.mkdir(parents=True, exist_ok=True)
     report = []
     context = _ssl_context()
-    for key, (url, title) in (feeds or FEEDS).items():
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "netmon (network traffic monitor)"})
-            with urllib.request.urlopen(req, timeout=timeout, context=context) as res:
-                body = res.read().decode("utf-8", errors="replace")
-            check = ThreatIntel()
-            count = check.load_text(body, title)
+    for key, (urls, title) in (feeds or FEEDS).items():
+        errors = []
+        for url in [urls] if isinstance(urls, str) else urls:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "netmon (network traffic monitor)"})
+                with urllib.request.urlopen(req, timeout=timeout, context=context) as res:
+                    body = res.read().decode("utf-8", errors="replace")
+            except Exception as exc:
+                errors.append(f"{type(exc).__name__}: {exc}")
+                continue
+            count = ThreatIntel().load_text(body, title)
             if count == 0:
-                report.append(f"{key}: downloaded but no entries found - not saved")
+                errors.append("downloaded but no entries found")
                 continue
             stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             (folder / f"{key}.txt").write_text(f"# name: {title}\n# source: {url}\n# downloaded: {stamp}\n{body}")
             report.append(f"{key}: {count:,} entries saved")
-        except Exception as exc:
-            report.append(f"{key}: failed ({type(exc).__name__}: {exc})")
+            break
+        else:
+            report.append(f"{key}: failed ({'; '.join(errors)})")
     return report

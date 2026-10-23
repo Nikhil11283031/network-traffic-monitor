@@ -87,10 +87,11 @@ def test_update_feeds_saves_lists(tmp_path, monkeypatch):
         return FakeResponse(bodies[req.full_url])
 
     monkeypatch.setattr(ti.urllib.request, "urlopen", fake_urlopen)
-    report = update_feeds(tmp_path, {"good": ("https://a.example/list", "Good feed"),
+    report = update_feeds(tmp_path, {"good": (["https://c.example/down", "https://a.example/list"], "Good feed"),
                                      "empty": ("https://b.example/empty", "Empty"),
                                      "down": ("https://c.example/down", "Down")})
-    assert report[0] == "good: 1 entries saved" and "no entries" in report[1] and "failed" in report[2]
+    assert report[0] == "good: 1 entries saved"  # the first mirror failed, the second worked
+    assert "no entries" in report[1] and "failed" in report[1] and "unreachable" in report[2]
     loaded = ThreatIntel().load_dir(tmp_path)
     assert loaded.match_ip("198.51.100.9") == "Good feed"  # the "# name:" header was written
 

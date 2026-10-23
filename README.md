@@ -13,7 +13,7 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 **Highlights**
 
 - Six rule-based detectors (port scan, SYN flood, risky ports, data exfiltration, DNS tunnelling, new devices)
-- Threat intelligence from free public blocklists (abuse.ch Feodo Tracker and URLhaus, Spamhaus DROP)
+- Threat intelligence from free public blocklists (abuse.ch Feodo Tracker, Spamhaus DROP, URLhaus domains)
 - Unsupervised ML anomaly detection (Isolation Forest) that learns your network's normal behaviour
 - MITRE ATT&CK technique on every alert, linked to the official description
 - AI analyst agent (Claude, or free and local with Ollama) with a verification safety check
@@ -71,7 +71,7 @@ python3 -m netmon update-intel      # downloads the free feeds into intel/
 | --- | --- |
 | abuse.ch **Feodo Tracker** | Botnet command-and-control server IPs |
 | **Spamhaus DROP** | Hijacked and criminal IP ranges |
-| abuse.ch **URLhaus** | Domains spreading malware |
+| **URLhaus** (abuse.ch data, via the malware-filter project) | Domains spreading malware |
 
 Lists are plain text files in `intel/` (IP addresses, CIDR ranges, domains, hosts-file lines or Spamhaus JSON
 lines), so you can add your own. `intel/demo.txt` lists the documentation-only addresses used by the demo
