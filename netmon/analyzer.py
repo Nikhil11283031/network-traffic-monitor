@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import ipaddress
 import math
+import re
 import statistics
 import threading
 import uuid
@@ -29,6 +30,10 @@ RISKY_PORTS = {
     5900: "VNC remote desktop",
     6667: "IRC (often used by botnets)",
 }
+
+# Names that are random IDs, not real names: Apple devices announce e.g. 6BD4D4D2-B009-4315-...local for
+# privacy, and some devices use a long hex string. Found in a live test.
+RANDOM_NAME = re.compile(r"^(?:[0-9a-f]{8}-[0-9a-f]{4}-|[0-9a-f]{16,}$)", re.I)
 
 # UDP services that answer from their well-known port (DNS, DHCP, NTP, QUIC/HTTPS, mDNS, SSDP, STUN...).
 UDP_SERVICE_PORTS = {53, 67, 68, 69, 123, 137, 138, 161, 443, 500, 514, 853, 1900, 3478, 4500, 5353, 5355, 19302}
@@ -458,7 +463,7 @@ class Analyzer:
         for name, ip, _holder in p.dns_answers:
             if name.endswith(".local") and is_local(ip) and not ip.startswith(("224.", "ff")):
                 short = name[:-6].strip(".")[:64]
-                if short and short.lower() not in ("localhost",):
+                if short and short.lower() not in ("localhost",) and not RANDOM_NAME.match(short):
                     self.local_names[ip] = short
                     self.privacy.hostnames.setdefault(ip, short)
                     if ip in self.devices and not self.devices[ip].get("hostname"):

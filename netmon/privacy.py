@@ -166,6 +166,8 @@ class PrivacyTracker:
     def observe(self, p: PacketInfo):
         with self.lock:
             for asked, ip, holder in p.dns_answers:
+                if is_local(ip):  # local devices announcing themselves (mDNS) are named by the analyser instead
+                    continue
                 self.names.put(ip, asked)
                 if holder != asked and classify(holder, self.extra)[1] != "service" \
                         and classify(asked, self.extra)[1] == "service":

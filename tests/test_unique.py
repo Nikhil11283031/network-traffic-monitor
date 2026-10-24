@@ -295,3 +295,14 @@ def test_beacon_alert_names_the_server_owner():
         a.process(PacketInfo(T0 + i * 300, "192.168.1.103", "57.145.9.33", "TCP", 60, 40000 + i, 443, "S"))
     beacon = [x for x in a.alerts if x.kind == "Beaconing"][0]
     assert "57.145.9.33 (g.whatsapp.net, Meta)" in beacon.message and beacon.severity == "low"
+
+
+def test_random_id_names_are_ignored():
+    a = Analyzer()
+    a.process(PacketInfo(T0, "192.168.1.101", "224.0.0.251", "UDP", 90, 5353, 5353,
+                         dns_answers=(("6bd4d4d2-b009-4315-9a1e-2f6c1d0e7a11.local", "192.168.1.101", "x"),
+                                      ("a1b2c3d4e5f60718293a.local", "192.168.1.101", "x"))))
+    assert a.name_of("192.168.1.101") is None
+    a.process(PacketInfo(T0 + 1, "192.168.1.102", "224.0.0.251", "UDP", 90, 5353, 5353,
+                         dns_answers=(("Lounge-Apple-TV.local", "192.168.1.102", "x"),)))
+    assert a.name_of("192.168.1.102") == "lounge-apple-tv" or a.name_of("192.168.1.102") == "Lounge-Apple-TV"
