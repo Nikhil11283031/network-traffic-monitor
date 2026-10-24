@@ -497,7 +497,7 @@ const PORT_NAMES = {21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 8
 const PRIORITY = ["Threat intel", "ARP spoofing", "Brute force", "Port scan", "SYN flood", "High traffic", "Beaconing",
   "Unusual TLS client", "Suspicious DNS", "Risky port", "Watched country", "Anomaly (ML)", "Self-test", "New device"];
 const SEV_RANK = {high: 0, medium: 1, low: 2, info: 3};
-const isLocal = (ip) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip) || /^f[cd]/i.test(ip);
+const isLocal = (ip) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|127\.)/.test(ip) || /^(f[cd]|fe[89ab]|ff)/i.test(ip);
 const rows = (id, items, render, empty, cols = 6) => {
   $(id).innerHTML = items.length ? items.map(render).join("") : `<tr><td colspan="${cols}" class="empty">${empty}</td></tr>`;
 };
@@ -548,6 +548,7 @@ function drawMap(s) {
   const svg = $("map"), W = 820, H = 480, cx = W / 2, cy = H / 2 + 6;
   const sev = hostSeverity(s.alerts, s.devices);
   const country = Object.fromEntries(s.top_talkers.map((t) => [t.host, t.country]));
+  const names = Object.fromEntries(s.devices.filter((d) => d.hostname).map((d) => [d.ip, d.hostname]));
   const alias = Object.fromEntries(s.devices.flatMap((d) => (d.also || []).map((ip) => [ip, d.ip])));
   const main = (ip) => alias[ip] || ip;
   s = {...s, links: s.links.map((l) => ({...l, a: main(l.a), b: main(l.b)})).filter((l) => l.a !== l.b)};
@@ -601,7 +602,7 @@ function drawMap(s) {
       <title>${esc(ip)}${level ? ` (${level} alert)` : ""}</title>
       ${level === "high" ? `<circle class="ring" cx="${x}" cy="${y}" r="16"/>` : ""}
       <circle class="core" cx="${x}" cy="${y}" r="${r}"/>
-      <text x="${x}" y="${ly}">${esc(kind === "dev" ? ip.replace(/^192\.168\./, "…") : ip)}</text>
+      <text x="${x}" y="${ly}">${esc(kind === "dev" ? (names[ip] ? names[ip].slice(0, 18) : ip.replace(/^192\.168\./, "…")) : ip)}</text>
       <text class="sub" x="${x}" y="${sy}">${esc(sub)}</text></g>`;
   };
   externals.forEach((ip) => out += node(ip, "ext"));

@@ -77,10 +77,13 @@ def test_syn_flood():
 
 def test_dns_tunnelling():
     random_label = "q8z3kd92mfp0xv7ls1ty6wre4nbc5hgj0aui2o"
-    _, alerts = run([PacketInfo(T0, "192.168.1.12", "192.168.1.1", "DNS", 120, 50000, 53,
-                                dns_query=f"{random_label}.cdn-sync.example.")])
+    one = [PacketInfo(T0, "192.168.1.12", "192.168.1.1", "DNS", 120, 50000, 53, dns_query=f"{random_label}.cdn-sync.example.")]
+    assert run(one)[1] == []  # one random-looking name is normal (apps put IDs in names)
+    many = [PacketInfo(T0 + i, "192.168.1.12", "192.168.1.1", "DNS", 120, 50000 + i, 53,
+                       dns_query=f"{random_label[i:]}{random_label[:i]}.cdn-sync.example.") for i in range(5)]
+    _, alerts = run(many)
     assert kinds(alerts) == ["Suspicious DNS"]
-    assert alerts[0].target == "cdn-sync.example"
+    assert alerts[0].target == "cdn-sync.example" and "5 random-looking names" in alerts[0].message
 
 
 def test_ordinary_long_domain_is_fine():
@@ -309,3 +312,29 @@ def test_second_copy_is_detected(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", lambda url, timeout: Resp())
     assert cli.running_monitor(5050) == "port 5050, watching live: en0"
+
+
+def test_live_wifi_false_alarms_round_two():
+    """From 5 hours on a real home network: Finder's SMB, HTTP/3 video, one random app name, WhatsApp keep-alive,
+    and a device's IPv6 address all looked like attacks."""
+    from netmon.analyzer import Analyzer, PacketInfo
+
+    a = Analyzer()
+    a.process(PacketInfo(T0, "192.168.1.103", "192.168.1.1", "TCP", 60, 50000, 445, "S", src_mac="aa:00:00:00:01:03"))
+    for i in range(3000):  # 3,000 HTTP/3 (QUIC) packets on one UDP flow = one conversation
+        a.process(PacketInfo(T0 + 1 + i * 0.001, "192.168.1.103", "142.250.66.78", "UDP", 1200, 61000, 443))
+    a.process(PacketInfo(T0 + 5, "192.168.1.103", "192.168.1.1", "DNS", 90, 5100, 53,
+                         dns_query="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8.claudeusercontent.com."))
+    a.process(PacketInfo(T0 + 6, "192.168.1.1", "192.168.1.103", "DNS", 120, 53, 5101,
+                         dns_answers=(("g.whatsapp.net", "57.145.9.33", "g.whatsapp.net"),)))
+    for i in range(12):
+        a.process(PacketInfo(T0 + 10 + i * 120, "192.168.1.103", "57.145.9.33", "TCP", 60, 40000 + i, 443, "S"))
+    a.process(PacketInfo(T0 + 100, "fe80::1c2:3ff:fe04:5", "ff02::fb", "UDP", 90, 5353, 5353, src_mac="AA:00:00:00:01:03"))
+    serious = [(x.kind, x.severity) for x in a.alerts if x.severity in ("high", "medium")]
+    assert serious == []
+    beacon = [x for x in a.alerts if x.kind == "Beaconing"][0]
+    assert beacon.severity == "low" and "Meta" in beacon.message
+    assert a.dst_ports[443] == 1 + 12  # the 3,000-packet QUIC flow counted once, plus the 12 WhatsApp connections
+    # The same things across the internet are still reported.
+    a.process(PacketInfo(T0 + 2000, "192.168.1.103", "203.0.113.7", "TCP", 60, 50001, 445, "S"))
+    assert [x.kind for x in a.alerts if x.severity == "medium"] == ["Risky port"]

@@ -62,8 +62,9 @@ class AnomalyDetector:
 
     # ------------------------------------------------------------------ input
 
-    def observe(self, p: PacketInfo) -> list[dict]:
-        """Feed one packet. Returns anomalies found in windows that have just finished."""
+    def observe(self, p: PacketInfo, starts: bool | None = None) -> list[dict]:
+        """Feed one packet. Returns anomalies found in windows that have just finished. `starts` says whether the
+        packet opens a new conversation (the analyser knows UDP flows); without it, the packet alone decides."""
         if self.error:
             return []
         if self.start is None:
@@ -84,7 +85,8 @@ class AnomalyDetector:
             f["packets_out"] += 1
             f["bytes_out"] += p.length
             f["peers"].add(p.dst)
-            starts = starts_conversation(p)
+            if starts is None:
+                starts = starts_conversation(p)
             if p.dport is not None and starts:
                 f["ports"].add(p.dport)
                 f["conn_attempts"] += 1
@@ -144,7 +146,9 @@ class AnomalyDetector:
     def _reasons(self, vec) -> list[str]:
         """Features clearly above anything seen while learning (at least double the normal maximum, with a
         small floor so tiny numbers do not count)."""
-        floors = [20, 50, 5, 5, 10, 5, 25, 3.8]
+        # Floors so normal bursts never count: opening a news site contacts 30+ hosts and makes dozens of DNS
+        # lookups (found in a live test); an attack goes far beyond these.
+        floors = [20, 50, 40, 10, 10, 30, 25, 3.8]
         out = []
         for i, (name, text) in enumerate(FEATURES):
             normal = self.normal_max[i]

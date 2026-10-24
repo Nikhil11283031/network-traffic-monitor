@@ -40,7 +40,7 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 - Accuracy benchmark against public datasets (CIC-IDS2017, UNSW-NB15) with detection rate, time to detect,
   precision and false alarms per hour
 - Tested on a real home Wi-Fi network: the false alarms found there were fixed (see below)
-- 92 automated tests, GitHub Actions CI and a Docker image
+- 95 automated tests, GitHub Actions CI and a Docker image
 
 ![Dashboard](docs/dashboard.png)
 
@@ -54,14 +54,14 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 | --- | --- | --- |
 | **Port scan** | High | One host tries 15+ different ports on another host within 10 seconds (counts connection attempts only, so normal replies are ignored). |
 | **SYN flood** | High | 200+ connection attempts to one host within 5 seconds - a sign of a denial-of-service attack. |
-| **Risky port** | Medium | A connection to a service that is unsafe or often abused: FTP (21), Telnet (23), SMB (445), MS SQL (1433), RDP (3389), 4444 (common backdoor), VNC (5900), IRC (6667). |
+| **Risky port** | Medium | A connection to a service that is unsafe or often abused: FTP (21), Telnet (23), SMB (445), MS SQL (1433), RDP (3389), 4444 (common backdoor), VNC (5900), IRC (6667). File sharing, Remote Desktop and Screen Sharing between your own devices are normal and not reported; across the internet they are. |
 | **High traffic** | Medium | One of your own devices sends 5 MB+ within 10 seconds - a large upload could be data being stolen. Downloads (data coming in) do not count. |
-| **Suspicious DNS** | Medium | A DNS lookup with a very long (40+ characters) or random-looking name, measured with Shannon entropy. Malware uses this to hide data in DNS (DNS tunnelling) or to find its servers. Content-delivery networks (Akamai, Cloudflare, AWS...) that use random-looking names by design are ignored; the list is editable in Settings. |
+| **Suspicious DNS** | Medium | 5+ different very long (40+ characters) or random-looking names (Shannon entropy) under one domain within 60 seconds, or one name close to the 63-character maximum. One random-looking name alone is normal, because apps put IDs in names. Malware uses this to hide data in DNS (DNS tunnelling) or to find its servers. Content-delivery networks (Akamai, Cloudflare, AWS...) that use random-looking names by design are ignored; the list is editable in Settings. |
 | **New device** | Low | A device that was not on the local network during the first 30 seconds appears. |
 | **Threat intel** | High | A device talks to, or looks up, an IP address or domain on a threat-intelligence blocklist. |
 | **ARP spoofing** | High | A device claims an IP address (usually the router's) that already belongs to another device's MAC address - the classic way to put yourself in the middle of other people's traffic. |
 | **Brute force** | High | 20+ connection attempts to one login service (SSH, RDP, FTP, Telnet, SMB, VNC, databases) within 60 seconds - password guessing. |
-| **Beaconing** | Medium | A device connects to the same outside server 10+ times at regular intervals (gaps vary by 15% or less) - how malware "calls home" to its command server. Ten, not eight, because the benchmark showed random traffic occasionally looks regular for eight connections. |
+| **Beaconing** | Medium | A device connects to the same outside server 10+ times at regular intervals (gaps vary by 15% or less) - how malware "calls home" to its command server. When the server is identified as a well-known company (Meta, Google, Apple...), it is a low-severity note instead: usually an app keeping its connection alive. Ten, not eight, because the benchmark showed random traffic occasionally looks regular for eight connections. |
 | **Watched country** | Medium | A device talks to a server in a country on your watch list (needs the GeoIP database). |
 | **Anomaly (ML)** | Medium | The machine-learning model finds a device behaving unlike anything it learned as normal. |
 | **Unusual TLS client** | Medium | After learning for 60 seconds which programs each device uses (by JA4 TLS fingerprint), a device opens an encrypted connection to an outside server with a program it never used before **and** without naming a website. |
@@ -135,8 +135,8 @@ your network and flags behaviour that does not fit (`netmon/ml.py`):
 1. Traffic is cut into 5-second windows. For each active local device a feature vector is built: packets and
    kilobytes sent, number of different hosts and ports contacted, connection attempts, DNS lookups, and the
    longest and most random DNS name.
-2. **Learning phase:** the first 40 seconds of a capture file (5 minutes for live traffic, `--ml-learn` to
-   change) are treated as normal.
+2. **Learning phase:** the first 40 seconds of a capture file (30 minutes for live traffic, because real browsing is bursty; `--ml-learn`
+   to change) are treated as normal.
 3. An **Isolation Forest** (scikit-learn) is trained on those windows. It isolates unusual points with few
    random splits, giving them a low anomaly score. It is **unsupervised**: no labelled attack data is needed.
 4. Each later window is scored. An alert needs a low score **and** at least one feature at least double the
@@ -537,7 +537,8 @@ Nothing is sent to other devices or the internet, and `lab/` is ignored by git.
 
 Demo files and lab recordings are tidy; real networks are not. The monitor was run live on a home Wi-Fi network
 (a MacBook on `en0`, a router, phones and other devices) during ordinary use. The first runs raised alarms
-that were wrong, each was traced to its cause, fixed, and turned into a test using the same traffic pattern:
+that were wrong (first in a few minutes of browsing, then in a 5-hour run), each was traced to its cause,
+fixed, and turned into a test using the same traffic pattern:
 
 | False alarm on real traffic | Cause | Fix |
 | --- | --- | --- |
@@ -545,6 +546,12 @@ that were wrong, each was traced to its cause, fixed, and turned into a test usi
 | "High traffic" from outside servers | Video and update downloads were treated like uploads | Only data sent *by your own devices* counts |
 | "Beaconing" to 224.0.0.251 | Macs announce themselves on multicast (mDNS) every few seconds, and multicast was treated as "outside" | Multicast, broadcast, link-local and loopback count as the local network |
 | "Suspicious DNS" under akadns.net / cloudflare.net | Content-delivery networks use random-looking server names on purpose | A list of delivery networks is ignored (editable in Settings) |
+| "Risky port 445" from the laptop to the router | Finder looks for shared drives on the router | File sharing between your own devices is not reported |
+| ML: "1,826 connection attempts" | HTTP/3 (QUIC) video sends thousands of UDP packets on one flow, and each counted | A UDP flow counts as one conversation |
+| "Suspicious DNS" for claudeusercontent.com, qualtrics.com | Apps put random IDs in names; one such name is normal | Tunnelling needs 5+ random names under one domain in a minute |
+| "Beaconing" to 57.145.x every 120-300 s | WhatsApp keeping its connection alive (Meta's network) | Known companies' servers give a low note that names the owner |
+| ML: "talked to 32 hosts", "5 ports" | Five minutes of learning is too short for real browsing | 30 minutes of learning live, higher minimums |
+| "New device" twice for one device | Its IPv6 address looked like another device | Devices are recognised by hardware (MAC) address |
 | The AI analyst invented an attack when nothing was detected | A small local model (qwen2.5:7b) filled an empty story with a textbook attack | No AI story without alerts, and any answer naming an address that never appeared in the traffic is discarded |
 
 After the fixes the same network stays **Calm**, with only genuine "New device" alerts when a phone joins.
@@ -559,7 +566,7 @@ python3 -m pytest
 GitHub Actions (`.github/workflows/tests.yml`) runs the tests on Python 3.10, 3.11 and 3.12 on every push, runs
 the demo, and builds and runs the Docker image. The badge at the top shows the result.
 
-92 tests cover the JA4 fingerprint (against the specification's example), TLS reassembly, DNS/CNAME and DHCP
+95 tests cover the JA4 fingerprint (against the specification's example), TLS reassembly, DNS/CNAME and DHCP
 parsing, the Privacy X-ray, the self-test (including that drills never reach the real alerts), the attack story
 (including an attack that spreads), MITRE tagging, every threat-intelligence feed format and the feed download, the ML detector
 (learning, flagging only unusual behaviour, the demo capture, running without scikit-learn), and each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary

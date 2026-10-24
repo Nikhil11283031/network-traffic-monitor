@@ -111,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--watch-countries", default="", help='alert on traffic to these countries, e.g. "KP,IR"')
         p.add_argument("--no-ml", action="store_true", help="turn off machine-learning anomaly detection")
         p.add_argument("--ml-learn", type=float, default=None,
-                       help="seconds of traffic the ML model learns from (default 40 for files, 300 for live)")
+                       help="seconds of traffic the ML model learns from (default 40 for files, 1800 = 30 minutes for live)")
         p.add_argument("--privacy", default="privacy", help="folder with the optional extra tracker list")
         p.add_argument("--self-test-hours", type=float, default=6,
                        help="live mode: run the self-test every this many hours (0 = never; default 6)")
@@ -318,7 +318,7 @@ def main(argv=None):
     if not args.no_ml:
         from .ml import AnomalyDetector
 
-        ml_learn = args.ml_learn if args.ml_learn is not None else (300 if args.mode == "live" else 40)
+        ml_learn = args.ml_learn if args.ml_learn is not None else (1800 if args.mode == "live" else 40)
         error = AnomalyDetector().error
         print("Machine learning: " + (f"Isolation Forest, learning normal behaviour for the first {ml_learn:g} s"
                                       if not error else error))

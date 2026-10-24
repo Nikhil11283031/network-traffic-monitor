@@ -13,7 +13,7 @@ import math
 import statistics
 import threading
 import uuid
-from collections import Counter, defaultdict, deque
+from collections import Counter, OrderedDict, defaultdict, deque
 from dataclasses import asdict, dataclass, field
 
 from .mitre import techniques_for
@@ -46,6 +46,10 @@ def starts_conversation(p) -> bool:
         return not (p.sport is not None and p.dport is not None and p.sport < 1024 <= p.dport)
     return False
 
+
+# Ports that are normal between devices in a home (Finder looking for shared drives, Screen Sharing, Remote
+# Desktop to your own PC) but risky when they cross to or from the internet.
+LAN_SERVICE_PORTS = {139, 445, 3389, 5900}
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 
@@ -83,6 +87,8 @@ class Config:
     dns_label_length: int = 40  # a DNS label this long looks like data being smuggled out
     dns_entropy: float = 3.8  # or one this random ...
     dns_entropy_min_length: int = 20  # ... and at least this long
+    dns_tunnel_names: int = 5  # alert after this many different random-looking names under one domain ...
+    dns_tunnel_window: float = 60.0  # ... within this many seconds (one random name alone is normal: apps use IDs)
     new_device_warmup: float = 30.0  # devices seen after this point are reported as new
     brute_force_attempts: int = 20  # connection attempts to one login service ...
     brute_force_window: float = 60.0  # ... within this many seconds
@@ -246,6 +252,10 @@ class Analyzer:
         self.ip_mac: dict[str, str] = {}  # local IP -> MAC address it was first seen with
         self._country_alerted: set = set()
         self.privacy = privacy if privacy is not None else PrivacyTracker(geo)  # see privacy.py
+        self._udp_flows: OrderedDict = OrderedDict()  # (src, sport, dst, dport) -> last packet time
+        self._dns_random = defaultdict(lambda: _Window(self.config.dns_tunnel_window))
+        self.known_macs: set = set()  # hardware addresses already seen (a device's IPv4 and IPv6 share one)
+        self.local_names: dict[str, str] = {}  # local address -> name the device announces (mDNS, "*.local")
         self.tls_clients: dict[str, Counter] = defaultdict(Counter)  # device -> {JA4 fingerprint: connections}
         self.tls_first: dict[str, float] = {}  # device -> when its first TLS connection was seen
 
@@ -278,15 +288,17 @@ class Analyzer:
         if self.intel is not None:
             self._check_intel(p, new_alerts)
         if self.ml is not None:
-            for anomaly in self.ml.observe(p):
+            for anomaly in self.ml.observe(p, self._starts(p)):
                 self._ml_alert(anomaly, new_alerts)
         self.host_peers[p.src][p.dst] += p.length
         self.privacy.observe(p)
+        if p.sport == 5353 and p.dns_answers:
+            self._learn_names(p)
         if p.ja4:
             self._check_tls(p, new_alerts)
 
         is_syn = p.proto == "TCP" and "S" in p.flags and "A" not in p.flags
-        starts = starts_conversation(p)
+        starts = self._starts(p)
 
         if p.dport is not None and starts:
             self.dst_ports[p.dport] += 1
@@ -334,7 +346,8 @@ class Analyzer:
                             f"{p.src} connected to {p.dst} in {country}, a country on your watch list.")
 
         # Risky or unusual services.
-        if p.dport in RISKY_PORTS and starts:
+        if p.dport in RISKY_PORTS and starts and not (
+                p.dport in LAN_SERVICE_PORTS and is_local(p.src) and is_local(p.dst)):
             self._alert(new_alerts, p.ts, "medium", "Risky port", p.src, f"{p.dst}:{p.dport}",
                         f"{p.src} connected to {p.dst} on port {p.dport} - {RISKY_PORTS[p.dport]}.", port=p.dport)
 
@@ -360,15 +373,20 @@ class Analyzer:
             self.host_dns[p.src][name] += 1
             label = max(name.split("."), key=len)
             entropy = shannon_entropy(label)
-            if self.config.dns_ignored(name):
-                pass
-            elif len(label) >= self.config.dns_label_length or (
-                len(label) >= self.config.dns_entropy_min_length and entropy >= self.config.dns_entropy
-            ):
+            random_looking = len(label) >= self.config.dns_label_length or (
+                len(label) >= self.config.dns_entropy_min_length and entropy >= self.config.dns_entropy)
+            if random_looking and not self.config.dns_ignored(name):
+                # One random-looking name is normal (apps put IDs in names); tunnelling needs many of them, and a
+                # label close to the 63-character maximum is suspicious on its own.
                 base = base_domain(name)
-                self._alert(new_alerts, p.ts, "medium", "Suspicious DNS", p.src, base,
-                            f"{p.src} looked up a random-looking name ({len(label)} characters, "
-                            f"entropy {entropy:.1f}) under {base}. This can be DNS tunnelling or malware.")
+                window = self._dns_random[(p.src, base)]
+                window.add(p.ts, key=name)
+                count = window.distinct_keys()
+                if count >= self.config.dns_tunnel_names or len(label) >= 52:
+                    self._alert(new_alerts, p.ts, "medium", "Suspicious DNS", p.src, base,
+                                f"{p.src} looked up {count} random-looking name{'s' if count > 1 else ''} under {base} "
+                                f"in {self.config.dns_tunnel_window:g} seconds (e.g. {len(label)} characters, entropy "
+                                f"{entropy:.1f}). This can be DNS tunnelling or malware.")
         return new_alerts
 
     def _check_arp(self, p: PacketInfo, new_alerts: list[Alert]):
@@ -399,10 +417,58 @@ class Analyzer:
             return
         jitter = statistics.pstdev(gaps) / mean
         if jitter <= self.config.beacon_max_jitter:
+            owner = self.privacy.names.get(p.dst)
+            company = None
+            if owner:
+                from .privacy import KNOWN, classify
+
+                found, _category = classify(owner, self.privacy.extra)
+                company = found if (found, _category) in KNOWN.values() or owner in self.privacy.extra else None
+            if company:  # a well-known company's server: almost always an app keeping in touch (WhatsApp, Mail...)
+                self._alert(new_alerts, p.ts, "low", "Beaconing", p.src, p.dst,
+                            f"{p.src} connects to {p.dst} ({owner}, {company}) every {mean:.0f} seconds - probably an "
+                            "app keeping its connection alive. Only worrying if nothing on the device uses "
+                            f"{company}.", cooldown=1800)
+                return
             self._alert(new_alerts, p.ts, "medium", "Beaconing", p.src, p.dst,
-                        f"{p.src} connects to {p.dst} every {mean:.0f} seconds like clockwork "
+                        f"{p.src} connects to {p.dst}" + (f" ({owner})" if owner else "")
+                        + f" every {mean:.0f} seconds like clockwork "
                         f"({len(recent)} times, timing varies only {jitter * 100:.0f}%) - malware often "
                         "\"calls home\" to its server on a timer.", cooldown=1800)  # once per 30 minutes
+
+    def _starts(self, p: PacketInfo) -> bool:
+        """Like starts_conversation(), but a UDP packet only counts when its flow is new (or was quiet for a
+        minute). Video calls and HTTP/3 (QUIC) send thousands of UDP packets on one flow; found in a live test."""
+        if not starts_conversation(p):
+            return False
+        if p.proto == "TCP":
+            return True
+        flow = (p.src, p.sport, p.dst, p.dport)
+        last = self._udp_flows.get(flow)
+        self._udp_flows[flow] = p.ts
+        self._udp_flows.move_to_end(flow)
+        if len(self._udp_flows) > 50_000:
+            self._udp_flows.popitem(last=False)
+        return last is None or p.ts - last > 60
+
+    def _learn_names(self, p: PacketInfo):
+        """Devices announce their own name over mDNS (Bonjour), e.g. 'Nikhils-MacBook-Air.local -> 192.168.1.103'.
+        Phones, Macs, printers, TVs and speakers do this, so the dashboard can show names instead of addresses."""
+        for name, ip, _holder in p.dns_answers:
+            if name.endswith(".local") and is_local(ip) and not ip.startswith(("224.", "ff")):
+                short = name[:-6].strip(".")[:64]
+                if short and short.lower() not in ("localhost",):
+                    self.local_names[ip] = short
+                    self.privacy.hostnames.setdefault(ip, short)
+                    if ip in self.devices and not self.devices[ip].get("hostname"):
+                        self.devices[ip]["hostname"] = short
+
+    def name_of(self, ip: str) -> str | None:
+        """A readable name for an address: the device's own name, or the website an outside server belongs to."""
+        device = self.devices.get(ip)
+        if device and device.get("hostname"):
+            return device["hostname"]
+        return self.local_names.get(ip) or self.privacy.names.get(ip)
 
     def _check_tls(self, p: PacketInfo, new_alerts: list[Alert]):
         """Encrypted traffic: HTTPS hides the content, but the ClientHello's JA4 fingerprint shows which program
@@ -463,17 +529,23 @@ class Analyzer:
         if not is_local(p.src):
             return
         device = self.devices.get(p.src)
+        mac = (p.src_mac or "").lower()
         if device is None:
             device = self.devices[p.src] = {"ip": p.src, "mac": p.src_mac, "first_seen": p.ts,
                                             "last_seen": p.ts, "packets": 0}
-            if p.ts - self.first_ts >= self.config.new_device_warmup:
+            already_known = bool(mac) and mac in self.known_macs  # e.g. the IPv6 address of a known device
+            if p.ts - self.first_ts >= self.config.new_device_warmup and not already_known:
                 self._alert(new_alerts, p.ts, "low", "New device", p.src, "network",
                             f"A new device {p.src}" + (f" ({p.src_mac})" if p.src_mac else "")
                             + " joined the network.")
+        if mac:
+            self.known_macs.add(mac)
         device["last_seen"] = p.ts
         device["packets"] += 1
         if p.hostname:
             device["hostname"] = p.hostname
+        elif not device.get("hostname") and p.src in self.local_names:
+            device["hostname"] = self.local_names[p.src]
         if p.src_mac and not device["mac"]:
             device["mac"] = p.src_mac
 
@@ -497,7 +569,7 @@ class Analyzer:
         with self.lock:
             result = self.config.update(values)
             if result["changed"]:
-                for windows in (self._scan, self._syn, self._volume, self._login):
+                for windows in (self._scan, self._syn, self._volume, self._login, self._dns_random):
                     windows.clear()
                 self._country_alerted.clear()
             return result

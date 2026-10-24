@@ -253,8 +253,9 @@ def test_cdn_names_are_not_dns_tunnelling_and_router_is_labelled():
     for i, name in enumerate(["e6858.dsce9.akadns.net.", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4.cdn.cloudflare.net."]):
         a.process(PacketInfo(T0 + i, "192.168.1.103", "192.168.1.1", "DNS", 90, 5000 + i, 53, dns_query=name))
     assert not [x for x in a.alerts if x.kind == "Suspicious DNS"]
-    a.process(PacketInfo(T0 + 5, "192.168.1.103", "192.168.1.1", "DNS", 90, 5009, 53,
-                         dns_query="q8z3kd92mfp0xv7ls1tyq8z3kd92mfp0xv7ls1tyab.tunnel.example."))
+    for i in range(5):
+        a.process(PacketInfo(T0 + 5 + i, "192.168.1.103", "192.168.1.1", "DNS", 90, 5009 + i, 53,
+                             dns_query=f"q8z3kd92mfp0xv7ls1tyq8z3kd92mfp0xv7ls1t{i}ab.tunnel.example."))
     assert [x for x in a.alerts if x.kind == "Suspicious DNS"]  # a real tunnel is still caught
     assert a.gateway() == "192.168.1.1"
     alerts = [{"id": "1", "ts": T0, "kind": "Port scan", "severity": "high", "source": "192.168.1.1",
@@ -266,3 +267,31 @@ def test_cdn_names_are_not_dns_tunnelling_and_router_is_labelled():
     assert any("never isolate your router" in c for c in inc["cautions"])
     c = Config()
     assert c.update({"dns_ignore_domains": "Example.NET, cdn.test"})["changed"]["dns_ignore_domains"] == "example.net,cdn.test"
+
+
+def test_devices_are_named_from_mdns_announcements():
+    """Devices announce their own names (Bonjour/mDNS); the dashboard shows them instead of addresses."""
+    from scapy.all import DNS, DNSRR, IP, UDP, Ether, raw
+
+    from netmon.capture import _dpkt_info
+
+    ann = Ether(src="aa:bb:cc:dd:ee:03") / IP(src="192.168.1.103", dst="224.0.0.251") / UDP(sport=5353, dport=5353) / \
+        DNS(qr=1, aa=1, an=[DNSRR(rrname="Nikhils-MacBook-Air.local", type="A", rdata="192.168.1.103")])
+    info = _dpkt_info(T0, raw(ann), 1)
+    assert info.dns_answers == (("nikhils-macbook-air.local", "192.168.1.103", "nikhils-macbook-air.local"),)
+    a = Analyzer()
+    a.process(info)
+    a.process(PacketInfo(T0 + 1, "192.168.1.103", "57.145.9.33", "TCP", 60, 5000, 443, "S"))
+    assert a.snapshot()["devices"][0]["hostname"] == "nikhils-macbook-air"
+    assert a.name_of("192.168.1.103") == "nikhils-macbook-air"
+    assert a.privacy.report()["devices"][0]["hostname"] == "nikhils-macbook-air"
+
+
+def test_beacon_alert_names_the_server_owner():
+    a = Analyzer()
+    a.process(PacketInfo(T0, "192.168.1.1", "192.168.1.103", "DNS", 100, 53, 5000,
+                         dns_answers=(("g.whatsapp.net", "57.145.9.33", "g.whatsapp.net"),)))
+    for i in range(12):
+        a.process(PacketInfo(T0 + i * 300, "192.168.1.103", "57.145.9.33", "TCP", 60, 40000 + i, 443, "S"))
+    beacon = [x for x in a.alerts if x.kind == "Beaconing"][0]
+    assert "57.145.9.33 (g.whatsapp.net, Meta)" in beacon.message and beacon.severity == "low"

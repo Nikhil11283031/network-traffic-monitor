@@ -17,7 +17,7 @@ def _extras(proto: str, sport, dport, payload: bytes, flow, tls: TLSReassembler 
     if proto == "TCP":
         hello = tls.feed(flow, payload) if tls is not None else parse_client_hello(payload)
         return {"tls_sni": hello["sni"], "ja4": hello["ja4"]} if hello else {}
-    if sport == 53:
+    if sport in (53, 5353):  # DNS replies, and mDNS announcements in which devices give their own name
         answers = dns_answers(payload)
         return {"dns_answers": tuple(answers)} if answers else {}
     if dport == 67 or sport == 68:
