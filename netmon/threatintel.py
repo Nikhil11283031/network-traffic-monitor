@@ -5,7 +5,7 @@ servers, spread malware or belong to criminal networks. If a device on your netw
 is a strong sign something is wrong - much stronger than a threshold rule.
 
 Lists live as text files in the intel/ folder. `python3 -m netmon update-intel` downloads the free feeds below.
-Each file may contain, one per line: an IP address, a CIDR range (e.g. 203.0.113.0/24), a domain name, a hosts-file
+Each file may contain, one per line: a JA4 TLS fingerprint of a known malware tool, an IP address, a CIDR range (e.g. 203.0.113.0/24), a domain name, a hosts-file
 line ("127.0.0.1 bad.example") or a JSON line with a "cidr" field (Spamhaus format). Lines starting with # or ;
 are comments. The first "# name: ..." comment, if present, is used as the list's display name.
 """
@@ -33,6 +33,7 @@ FEEDS = {
 }
 
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$")
+JA4_RE = re.compile(r"^[tqd][0-9s][0-9][di][0-9]{4}[0-9a-z]{2}_[0-9a-f]{12}_[0-9a-f]{12}$")
 SKIP_DOMAINS = {"localhost", "localhost.localdomain", "local", "broadcasthost"}
 
 
@@ -41,12 +42,13 @@ class ThreatIntel:
         self.ips: dict[str, str] = {}  # exact IP -> list name
         self.networks: list[tuple[ipaddress._BaseNetwork, str]] = []
         self.domains: dict[str, str] = {}
+        self.ja4: dict[str, str] = {}  # TLS fingerprints of known malware tools -> list name
         self.lists: dict[str, int] = {}  # list name -> number of entries
         self._ip_cache: dict[str, str | None] = {}
 
     @property
     def size(self) -> int:
-        return len(self.ips) + len(self.networks) + len(self.domains)
+        return len(self.ips) + len(self.networks) + len(self.domains) + len(self.ja4)
 
     def load_dir(self, folder: str | Path) -> "ThreatIntel":
         folder = Path(folder)
@@ -104,6 +106,9 @@ class ThreatIntel:
             return 1
         except ValueError:
             pass
+        if JA4_RE.match(value):
+            self.ja4[value] = name
+            return 1
         value = value.rstrip(".")
         if value not in SKIP_DOMAINS and DOMAIN_RE.match(value):
             self.domains[value] = name

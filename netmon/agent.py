@@ -101,6 +101,17 @@ PLAYBOOKS = {
         "If there is an innocent explanation (a backup, a game download, a new app), no action is needed.",
         "If not, check the device for malware and watch it for repeat behaviour.",
     ],
+    "Unusual TLS client": [
+        "Find which program on the device opened the connection (Activity Monitor / Task Manager, or the router's "
+        "connection list) - the TLS fingerprint says it is not the device's usual browser or apps.",
+        "Look up the destination address; a bare address with no website name is typical of malware and "
+        "remote-access tools.",
+        "If nobody installed something new, treat the device as infected: disconnect it, scan it and update it.",
+    ],
+    "Self-test": [
+        "Open Settings and change the setting the self-test names back to a lower value (or reset it).",
+        "Run the self-test again from the dashboard to confirm every drill is detected.",
+    ],
     "New device": [
         "Confirm whether the device belongs to someone on the network.",
         "If not, block it and change the Wi-Fi password.",
@@ -130,7 +141,12 @@ only describe them.
   the most serious kind of finding. "Anomaly (ML)" comes from a machine-learning model that learned normal
   behaviour; its reasons explain what was unusual. "ARP spoofing" means a device is impersonating another
   (usually the router) to intercept traffic; "Brute force" is password guessing; "Beaconing" is a device
-  contacting the same server on a fixed timer, typical of malware.
+  contacting the same server on a fixed timer, typical of malware. "Unusual TLS client" means a program the
+  device never used before opened an encrypted connection without naming a website (from its JA4 TLS
+  fingerprint) - typical of malware and remote-access tools.
+- Use get_attack_story to explain how incidents connect (for example a scanned device that later calls home)
+  and which attack stages were not reached. Use get_privacy_report for questions about privacy, trackers or
+  which companies devices talk to, and get_self_test when asked whether the monitor itself is working.
 
 Report format (Markdown) - always include all three sections:
 ## Summary
@@ -187,6 +203,27 @@ TOOLS = [
                          "enum": list(PLAYBOOKS)}}, "required": ["alert_type"]},
     },
     {
+        "name": "get_attack_story",
+        "description": "Alerts joined into attack chains: who did what, in which order, which stages of an attack "
+                       "(initial access, reconnaissance, credential access, command and control, exfiltration) "
+                       "were reached and which were not, and whether an attacked device later acted suspiciously.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_privacy_report",
+        "description": "Privacy X-ray: for each local device, which companies (advertisers, analytics, TV "
+                       "viewing trackers, social networks) and countries it sends data to, how much, and "
+                       "plain-language findings with what the owner can do. Use for privacy questions.",
+        "input_schema": {"type": "object", "properties": {"device": {"type": "string",
+                                                                     "description": "optional local IP"}}},
+    },
+    {
+        "name": "get_self_test",
+        "description": "Runs detection drills (textbook attacks replayed in a sandbox with the current settings) "
+                       "and reports which detectors would catch them. Use when asked whether the monitor works.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "get_proposed_responses",
         "description": "Defensive actions the responder proposes for the current alerts (block an outside server, "
                        "isolate a device, close a port, block a domain) and whether a person has approved them.",
@@ -197,7 +234,8 @@ TOOLS = [
 
 # Within the same severity, the order incidents are reported in (most telling first).
 KIND_PRIORITY = ["Threat intel", "ARP spoofing", "Brute force", "Port scan", "SYN flood", "High traffic",
-                 "Beaconing", "Suspicious DNS", "Risky port", "Watched country", "Anomaly (ML)", "New device"]
+                 "Beaconing", "Unusual TLS client", "Suspicious DNS", "Risky port", "Watched country", "Anomaly (ML)",
+                 "Self-test", "New device"]
 
 
 def incident_summary(alerts: list) -> list:
@@ -263,6 +301,32 @@ class Toolbox:
             return _clip(handler(**(args or {})))
         except Exception as exc:  # report bad arguments back to the model instead of crashing
             return {"error": f"{type(exc).__name__}: {exc}"}
+
+    def tool_get_attack_story(self):
+        from .story import build
+
+        data = build(self.analyzer.snapshot()["alerts"], {m: ip for ip, m in self.analyzer.ip_mac.items()})
+        return {"incidents": [{"title": i["title"], "severity": i["severity"], "actors": i["actors"],
+                               "victims": i["victims"], "stages_reached": i["stages"], "story": i["story"],
+                               "steps": [{"time": s["time"], "stage": s["stage"], "what": s["text"],
+                                          "alerts": s["count"], "mitre_attack": s["mitre"]} for s in i["steps"]]}
+                              for i in data["incidents"]],
+                "attack_chain": data["stages"]}
+
+    def tool_get_privacy_report(self, device=None):
+        report = self.analyzer.privacy.report([device] if device else None)
+        for d in report["devices"]:
+            d["parties"] = [{k: p[k] for k in ("company", "category_label", "sent", "received", "domains",
+                                               "countries", "cloaked")} for p in d["parties"][:12]]
+        report["devices"] = report["devices"][:8]
+        return report
+
+    def tool_get_self_test(self):
+        from .selftest import run_drills
+
+        result = run_drills(self.analyzer.config, self.analyzer.intel)
+        return {"passed": result["passed"], "total": result["total"],
+                "drills": [{k: r[k] for k in ("drill", "imitates", "detector", "ok", "fix")} for r in result["results"]]}
 
     def tool_get_overview(self):
         s = self.analyzer.snapshot()
@@ -544,6 +608,8 @@ TYPE_KEYWORDS = {
     "Beaconing": ("beacon", "calls home", "calling home", "regular interval", "every "),
     "Watched country": ("country", "watch list"),
     "Anomaly (ML)": ("anomal", "machine learning", "unusual"),
+    "Unusual TLS client": ("tls", "fingerprint", "ja4", "encrypted connection", "unknown program", "new program"),
+    "Self-test": ("self-test", "self test", "drill"),
 }
 
 
@@ -612,7 +678,13 @@ class OfflineAnalyst:
         snap = self.analyzer.snapshot()
         q = request.lower()
         ips = [w.strip("?.,!") for w in request.split() if w.strip("?.,!").count(".") == 3]
-        if any(w in q for w in ("upload", "exfil", "data leav", "sent a lot", "bandwidth")):
+        if any(w in q for w in ("privacy", "tracker", "tracking", "advertis", "companies", "who is my", "spying")):
+            text = self._privacy(ips[0] if ips else None)
+        elif any(w in q for w in ("story", "timeline", "what happened", "attack chain")):
+            text = self._story()
+        elif any(w in q for w in ("self-test", "self test", "working", "does it work", "still work")):
+            text = self._self_test()
+        elif any(w in q for w in ("upload", "exfil", "data leav", "sent a lot", "bandwidth")):
             text = self._uploads(snap, only=ips[0] if ips else None)
         elif ips:
             text = self._host_report(ips[0])
@@ -625,6 +697,41 @@ class OfflineAnalyst:
         else:
             text = self._full_report(snap)
         return AgentResult(text, "offline", note=note)
+
+    def _privacy(self, device=None) -> str:
+        report = self.analyzer.privacy.report([device] if device else None)
+        lines = ["## Privacy X-ray"]
+        if not report["findings"]:
+            lines.append("No advertising, analytics or tracking services were seen" +
+                         (" for this device." if device else ".") +
+                         ("" if report["names_known"] else " (No DNS replies or website names were seen yet, so "
+                                                            "outside servers could not be identified.)"))
+            return "\n".join(lines)
+        for f in report["findings"][:10]:
+            lines.append(f"- **{f['severity'].capitalize()}:** {f['text']}" + (f" *What you can do:* {f['tip']}"
+                                                                                 if f["tip"] else ""))
+        return "\n".join(lines)
+
+    def _story(self) -> str:
+        from .story import build
+
+        data = build(self.analyzer.snapshot()["alerts"], {m: ip for ip, m in self.analyzer.ip_mac.items()})
+        if not data["incidents"]:
+            return "## Attack story\nNo attacks were detected, so there is no story to tell."
+        lines = ["## Attack story"]
+        for i in data["incidents"]:
+            lines += ["", f"### {i['title']} - {i['severity'].capitalize()}",
+                      "Stages reached: " + " -> ".join(i["stages"]), i["story"]]
+        return "\n".join(lines)
+
+    def _self_test(self) -> str:
+        from .selftest import run_drills
+
+        r = run_drills(self.analyzer.config, self.analyzer.intel)
+        lines = [f"## Self-test: {r['passed']} of {r['total']} drills detected"]
+        lines += [f"- {'OK' if x['ok'] else 'MISSED'} - {x['drill']} ({x['imitates']})"
+                  + ("" if x["ok"] else f": {x['fix']}") for x in r["results"]]
+        return "\n".join(lines)
 
     def _biggest_threat(self, snap) -> str:
         scores = defaultdict(int)

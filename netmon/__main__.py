@@ -8,6 +8,9 @@
     python3 -m netmon history --severity high                show saved alerts from earlier runs
     python3 -m netmon mcp                                    MCP server for Claude Desktop and other AI apps
     python3 -m netmon benchmark Friday.pcap --truth cicids2017-friday   accuracy on a public dataset
+    python3 -m netmon selftest                               check that every detector still catches its attack
+    python3 -m netmon privacy capture.pcap                   Privacy X-ray: who each device sends data to
+    python3 -m netmon update-privacy                         optional extra tracker list (non-commercial use)
 
 Notifications: --notify-mac, --discord-webhook URL, --slack-webhook URL, --webhook URL, --email-to ADDRESS
 (email uses NETMON_SMTP_HOST / _PORT / _USER / _PASSWORD / _FROM).
@@ -83,6 +86,16 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--no-ml", action="store_true")
     bench.add_argument("--ml-learn", type=float, default=600,
                        help="seconds of traffic the ML model learns from (default 600)")
+    st = sub.add_parser("selftest", help="run the detection drills with the default (or given) settings")
+    st.add_argument("--intel", default="intel")
+    st.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                    help="test a setting, e.g. --set port_scan_ports=40")
+    priv = sub.add_parser("privacy", help="Privacy X-ray of a capture file: companies and trackers per device")
+    priv.add_argument("path")
+    priv.add_argument("--geoip", default="geoip")
+    priv.add_argument("--privacy", default="privacy", help="folder with the optional extra tracker list")
+    upriv = sub.add_parser("update-privacy", help="download Disconnect's tracker list (CC BY-NC-SA: non-commercial)")
+    upriv.add_argument("--dir", default="privacy")
     mcp = sub.add_parser("mcp", help="run an MCP server (stdio) for Claude Desktop and other AI apps")
     mcp.add_argument("--url", default="http://127.0.0.1:5050", help="address of the running dashboard")
 
@@ -98,6 +111,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--no-ml", action="store_true", help="turn off machine-learning anomaly detection")
         p.add_argument("--ml-learn", type=float, default=None,
                        help="seconds of traffic the ML model learns from (default 40 for files, 300 for live)")
+        p.add_argument("--privacy", default="privacy", help="folder with the optional extra tracker list")
+        p.add_argument("--self-test-hours", type=float, default=6,
+                       help="live mode: run the self-test every this many hours (0 = never; default 6)")
         p.add_argument("--db", default="netmon.db", help="alert history database (default netmon.db)")
         p.add_argument("--no-db", action="store_true", help="do not save alerts")
         p.add_argument("--notify-mac", action="store_true", help="macOS notification for serious alerts")
@@ -148,6 +164,53 @@ def run_benchmark(args) -> int:
     return 0
 
 
+def run_selftest(args) -> int:
+    from .analyzer import Config
+    from .selftest import run_drills
+    from .threatintel import ThreatIntel
+
+    config = Config()
+    for item in args.set:
+        name, _, value = item.partition("=")
+        result = config.update({name.strip(): value.strip()})
+        if result["errors"]:
+            print(f"Setting {name}: {result['errors']}")
+            return 2
+    intel = ThreatIntel().load_dir(args.intel)
+    r = run_drills(config, intel if intel.size else None)
+    print(f"Self-test: {r['passed']} of {r['total']} drills detected (sandbox - nothing is sent on the network)\n")
+    for x in r["results"]:
+        mark = "\033[92mOK    \033[0m" if x["ok"] else "\033[91mMISSED\033[0m"
+        print(f"  {mark} {x['drill']:<26} {x['imitates']}" + ("" if x["ok"] else f"\n         {x['fix']}"))
+    print("\nFor an end-to-end test with real packets on this computer: python3 labs/self_lab.py")
+    return 0 if r["ok"] else 1
+
+
+def run_privacy(args) -> int:
+    from .analyzer import Analyzer
+    from .geoip import GeoIP
+    from .privacy import PrivacyTracker, load_extra
+
+    geo = GeoIP().load_dir(args.geoip)
+    analyzer = Analyzer(privacy=PrivacyTracker(geo if geo.size else None, load_extra(args.privacy)))
+    read_pcap(analyzer, args.path)
+    report = analyzer.privacy.report()
+    print(f"Privacy X-ray of {args.path}: {len(report['devices'])} device(s), {report['names_known']:,} outside "
+          "addresses identified" + ("" if geo.size else " (add countries: python3 -m netmon update-geoip)") + "\n")
+    for d in report["devices"]:
+        name = d["hostname"] or d["kind"] or ""
+        print(f"{d['device']} {name}: {d['companies']} companies, {d['trackers']} tracking/ads/analytics, "
+              f"{d['tracker_share'] * 100:.0f}% of its uploads went to them")
+        for p in d["parties"][:8]:
+            print(f"    {p['category_label']:<20} {p['company']:<24} sent {p['sent'] / 1000:8.0f} KB  "
+                  + ", ".join(p["domains"][:2]) + (f"  [{', '.join(p['countries'])}]" if p["countries"] else ""))
+    if report["findings"]:
+        print("\nFindings:")
+        for f in report["findings"][:12]:
+            print(f"  [{f['severity']}] {f['text']}" + (f"\n         What you can do: {f['tip']}" if f["tip"] else ""))
+    return 0
+
+
 def run_history(args) -> int:
     from .store import AlertStore
 
@@ -183,6 +246,17 @@ def main(argv=None):
         return 0
     if args.mode == "history":
         return run_history(args)
+    if args.mode == "selftest":
+        return run_selftest(args)
+    if args.mode == "privacy":
+        return run_privacy(args)
+    if args.mode == "update-privacy":
+        from .privacy import update_list
+
+        print("Downloading Disconnect's tracker list (licence: CC BY-NC-SA 4.0 - free for personal and "
+              "non-commercial use only; do not ship it in a paid product) ...")
+        print("  " + update_list(args.dir))
+        return 0
     if args.mode == "benchmark":
         return run_benchmark(args)
     if args.mode == "mcp":
@@ -234,8 +308,14 @@ def main(argv=None):
         notifier = build_notifier(spec)
         print(f"Notifications: {', '.join(c.name for c in notifier.channels)} for {args.notify_min}+ alerts")
 
+    from .privacy import load_extra
+
+    privacy_extra = load_extra(args.privacy)
+    if privacy_extra:
+        print(f"Privacy X-ray: built-in list + {len(privacy_extra):,} tracker domains from {args.privacy}/")
     source = f"live: {args.iface or 'default interface'}" if args.mode == "live" else f"file: {args.path}"
-    monitor = Monitor(source, config=config, intel=intel, geo=geo, ml_learn=ml_learn, store=store, notifier=notifier)
+    monitor = Monitor(source, config=config, intel=intel, geo=geo, ml_learn=ml_learn, store=store, notifier=notifier,
+                      privacy_extra=privacy_extra, live=args.mode == "live")
     monitor.analyzer.listeners.append(print_alert)
     analyzer = monitor.analyzer
     if args.mode == "live":
@@ -244,6 +324,13 @@ def main(argv=None):
         worker = lambda: read_pcap(analyzer, args.path, args.speed)  # noqa: E731
 
     print(f"Network monitor - watching {source}. Only monitor networks you own or have permission to monitor.")
+    if args.mode == "live" and args.self_test_hours > 0:
+        monitor.schedule_self_tests(every=args.self_test_hours * 3600)
+    else:
+        monitor.run_self_test()
+    st = monitor.self_test
+    print(f"Self-test: {st['passed']} of {st['total']} detection drills passed"
+          + ("" if st["ok"] else " - see the dashboard or run: python3 -m netmon selftest") if st else "Self-test: running")
 
     try:
         if args.no_web:

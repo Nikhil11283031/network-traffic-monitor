@@ -101,6 +101,21 @@
         "High traffic",
         "Threat intel"
       ]
+    },
+    {
+      "name": "Malware on the TV (encrypted, no website name)",
+      "start": 1792000068,
+      "end": 1792000068,
+      "attackers": [
+        "192.168.1.12"
+      ],
+      "victims": [
+        "198.51.100.66"
+      ],
+      "expected": [
+        "Unusual TLS client",
+        "Threat intel"
+      ]
     }
   ]
 }

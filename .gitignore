@@ -19,3 +19,6 @@ benchmark-results/
 
 # self-lab recordings (labs/self_lab.py)
 lab/
+
+# optional tracker list (non-commercial licence), downloaded by update-privacy
+privacy/

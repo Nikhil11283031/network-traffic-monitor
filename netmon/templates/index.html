@@ -221,6 +221,55 @@
   .toast.show { opacity: 1; }
   .muted { color: var(--muted); }
 
+  /* ---------- attack story ---------- */
+  .story { border: 1px solid var(--rule); border-radius: 12px; background: var(--panel); padding: 18px 20px; display: grid; gap: 14px; }
+  .story-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+  .story-head h3 { margin: 0; font-size: 18px; font-variation-settings: "wdth" 85; }
+  .chain { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+  .chain div { padding: 7px 8px 6px; border-radius: 6px; background: var(--bg); color: var(--muted); font-size: 12.5px;
+               font-weight: 600; line-height: 1.25; border-top: 3px solid var(--rule); }
+  .chain div.hit { color: var(--text); background: var(--raised); }
+  .chain div.hit.high { border-top-color: var(--high); }
+  .chain div.hit.medium { border-top-color: var(--medium); }
+  .chain div.hit.low { border-top-color: var(--low); }
+  .chain div small { display: block; font-weight: 400; color: var(--muted); margin-top: 2px; }
+  .narrative { margin: 0; max-width: 90ch; }
+  #stories { display: grid; gap: 18px; }
+  .tl li > div, .findings li > div, .dev td { overflow-wrap: anywhere; }
+  .tl { list-style: none; margin: 0; padding: 0 0 0 4px; display: grid; gap: 0; }
+  .tl li { display: grid; grid-template-columns: 74px 14px minmax(0, 1fr); gap: 0 10px; padding: 0 0 12px; position: relative; }
+  .tl li .t { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; padding-top: 1px; }
+  .tl li .pin { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--muted); position: relative; z-index: 1; }
+  .tl li .pin.high { background: var(--high); } .tl li .pin.medium { background: var(--medium); } .tl li .pin.low { background: var(--low); }
+  .tl li:not(:last-child)::before { content: ""; position: absolute; left: 88px; top: 14px; bottom: 0; width: 2px; background: var(--rule); }
+  .tl li .stage { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  .tl li .detail { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .tl li.future { opacity: .15; }
+  .tl li.now .pin { box-shadow: 0 0 0 5px var(--calm-bg); }
+  @media (prefers-reduced-motion: no-preference) { .tl li { transition: opacity .35s; } }
+
+  /* ---------- privacy ---------- */
+  .kpis { display: flex; flex-wrap: wrap; gap: 8px 34px; }
+  .kpis div { display: grid; }
+  .kpis b { font-size: 26px; font-weight: 700; font-variation-settings: "wdth" 80; line-height: 1.15; font-variant-numeric: tabular-nums; }
+  .kpis span { color: var(--muted); font-size: 13px; }
+  .findings { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); overflow: hidden; }
+  .findings li { display: grid; grid-template-columns: 4px minmax(0, 1fr); gap: 0 14px; padding: 11px 16px 11px 0; border-bottom: 1px solid var(--rule); }
+  .findings li:last-child { border-bottom: 0; }
+  .findings .tip { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .devgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 430px), 1fr)); gap: 16px; }
+  .dev { border: 1px solid var(--rule); border-radius: 12px; background: var(--panel); padding: 16px 18px; display: grid; gap: 10px; align-content: start; }
+  .dev h3 { margin: 0; font-size: 17px; font-variation-settings: "wdth" 85; }
+  .dev .sub { color: var(--muted); font-size: 13px; }
+  .share { height: 8px; border-radius: 4px; background: var(--bg); overflow: hidden; }
+  .share span { display: block; height: 100%; background: var(--medium); }
+  .chip { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 10px; white-space: nowrap; background: var(--bg); color: var(--muted); }
+  .chip.high { color: var(--high); background: var(--high-bg); } .chip.medium { color: var(--medium); background: var(--medium-bg); }
+  .chip.low { color: var(--low); background: var(--low-bg); }
+  .drills { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
+  .drills li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 10px; }
+  .drills .ok { color: var(--calm); font-weight: 700; } .drills .bad { color: var(--high); font-weight: 700; }
+
   @media (max-width: 1100px) {
     .hero { grid-template-columns: 1fr; }
     .map-wrap { border-right: 0; border-bottom: 1px solid var(--rule); }
@@ -234,6 +283,9 @@
     .status { grid-template-columns: 1fr 1fr; }
     .entry { grid-template-columns: 4px 58px minmax(0, 1fr); }
     .entry > .act { grid-column: 3; justify-self: start; margin-top: 6px; }
+    .chain { grid-template-columns: 1fr 1fr; }
+    .tl li { grid-template-columns: 58px 14px minmax(0, 1fr); }
+    .tl li:not(:last-child)::before { left: 72px; }
   }
 </style>
 </head>
@@ -246,6 +298,8 @@
   </div>
   <nav aria-label="Sections">
     <button class="active" data-tab="overview">Overview</button>
+    <button data-tab="story">Attack story <span class="count" id="n-story" hidden></span></button>
+    <button data-tab="privacy">Privacy X-ray</button>
     <button data-tab="response">Response <span class="count" id="n-response" hidden></span></button>
     <button data-tab="history">History</button>
     <button data-tab="settings">Settings</button>
@@ -346,8 +400,35 @@
 
   <section class="table-wrap">
     <div class="head"><h2>Devices on your network</h2></div>
-    <table><thead><tr><th>Address</th><th>Hardware (MAC)</th><th>First seen</th><th>Last seen</th><th class="num">Packets</th></tr></thead>
+    <table><thead><tr><th>Address</th><th>Name</th><th>Hardware (MAC)</th><th>First seen</th><th>Last seen</th><th class="num">Packets</th></tr></thead>
       <tbody id="devices"></tbody></table>
+  </section>
+</div>
+
+<!-- ============================================================ STORY -->
+<div class="tab" id="tab-story" hidden>
+  <div class="head" style="margin:0"><h2>Attack story</h2>
+    <span class="aside">Alerts joined into chains: who did what, in which order, and how far each attack got.</span></div>
+  <div id="stories"><p class="empty">Loading…</p></div>
+  <section class="analyst" aria-labelledby="story-ai-h">
+    <div class="head" style="margin-bottom:0"><h2 id="story-ai-h">Explain it in plain words</h2>
+      <button class="ghost small" id="story-ask">Ask the analyst to tell the story</button></div>
+    <div id="story-out"></div>
+  </section>
+</div>
+
+<!-- ============================================================ PRIVACY -->
+<div class="tab" id="tab-privacy" hidden>
+  <div class="head" style="margin:0"><h2>Privacy X-ray</h2>
+    <span class="aside">Who each device sends data to. Nothing is decrypted: only names sent in the clear (DNS replies and the website name at the start of HTTPS) are read.</span></div>
+  <section class="kpis" id="p-kpis"></section>
+  <section>
+    <div class="head"><h2>What stands out</h2></div>
+    <ul class="findings" id="p-findings"></ul>
+  </section>
+  <section>
+    <div class="head"><h2>Devices</h2><span class="aside" id="p-note"></span></div>
+    <div class="devgrid" id="p-devices"></div>
   </section>
 </div>
 
@@ -388,6 +469,13 @@
     <p class="muted" style="margin:0 0 16px">Saved settings apply straight away to the traffic being watched.</p>
     <div class="settings" id="settings"></div>
   </section>
+  <section class="box">
+    <div class="head"><h2>Self-test</h2><button class="small" id="selftest-run">Run self-test now</button></div>
+    <p class="muted" style="margin:0 0 12px">Textbook attacks are replayed into a sandbox copy of the monitor with the settings above.
+      Nothing is sent on your network. If a drill is missed, your settings would miss that attack too.</p>
+    <ul class="drills" id="drills"><li class="muted">Not run yet.</li></ul>
+    <p class="muted" id="capture-health" style="margin:12px 0 0"></p>
+  </section>
   <section class="split">
     <div class="box"><div class="head"><h2>Components</h2></div><dl class="facts" id="facts"></dl></div>
     <div class="box"><div class="head"><h2>Notifications</h2><button class="ghost small" id="notify-test">Send test</button></div>
@@ -407,7 +495,7 @@ const size = (b) => b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : b >= 1e6 ? (b / 1e
 const PORT_NAMES = {21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 80: "HTTP", 123: "NTP",
   443: "HTTPS", 445: "SMB", 1433: "MS SQL", 3389: "RDP", 4444: "Backdoor", 5353: "mDNS", 5900: "VNC", 6667: "IRC"};
 const PRIORITY = ["Threat intel", "ARP spoofing", "Brute force", "Port scan", "SYN flood", "High traffic", "Beaconing",
-  "Suspicious DNS", "Risky port", "Watched country", "Anomaly (ML)", "New device"];
+  "Unusual TLS client", "Suspicious DNS", "Risky port", "Watched country", "Anomaly (ML)", "Self-test", "New device"];
 const SEV_RANK = {high: 0, medium: 1, low: 2, info: 3};
 const isLocal = (ip) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip) || /^f[cd]/i.test(ip);
 const rows = (id, items, render, empty, cols = 6) => {
@@ -436,8 +524,10 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("nav button").forEach((x) => { x.classList.toggle("active", x === b); x.setAttribute("aria-current", x === b ? "page" : "false"); });
   document.querySelectorAll(".tab").forEach((t) => t.hidden = t.id !== "tab-" + currentTab);
   if (currentTab === "response") loadResponses();
+  if (currentTab === "story") loadStory(true);
+  if (currentTab === "privacy") loadPrivacy(true);
   if (currentTab === "history") loadHistory();
-  if (currentTab === "settings") loadSettings();
+  if (currentTab === "settings") { loadSettings(); loadHealth(); }
 });
 
 // ------------------------------------------------------------------ network map
@@ -617,6 +707,7 @@ function drawStatus(s) {
     [s.ml && s.ml.state === "active" ? "on" : s.ml ? "warn" : "", "Machine learning", s.ml ? (s.ml.state === "learning" ? "learning what's normal" : s.ml.state) : "off"],
     [s.geo ? "on" : "", "Countries", s.geo ? "on" : "not installed"],
     [st.history ? "on" : "", "History", st.history ? `${st.history.alerts.toLocaleString()} alerts saved` : "off"],
+    [st.self_test ? (st.self_test.ok ? "on" : "warn") : "", "Self-test", st.self_test ? `${st.self_test.passed} of ${st.self_test.total} drills passed` : "not run"],
     [st.notifications && st.notifications.channels.length ? "on" : "", "Notifications", st.notifications && st.notifications.channels.length ? st.notifications.channels.join(", ") : "off"],
   ];
   $("status").innerHTML = items.map(([c, k, v]) => `<li><span class="dot ${c}"></span><span>${esc(k)}: <b>${esc(v)}</b></span></li>`).join("");
@@ -646,9 +737,11 @@ async function refresh() {
   rows("ports", s.top_ports, (p) => `<tr><td class="${p.risky ? "risky" : ""}">${p.port}${PORT_NAMES[p.port] ? " " + PORT_NAMES[p.port] : ""}${p.risky ? " (risky)" : ""}</td>
     <td class="num">${p.count.toLocaleString()}</td></tr>`, "No connections yet.");
   rows("dns", s.dns, (d) => `<tr><td class="mono">${esc(d.domain)}</td><td class="num">${d.count}</td></tr>`, "No lookups yet.");
-  rows("devices", s.devices, (d) => `<tr><td class="mono">${esc(d.ip)}</td><td class="mono">${esc(d.mac || "")}</td>
+  rows("devices", s.devices, (d) => `<tr><td class="mono">${esc(d.ip)}</td><td>${esc(d.hostname || "")}</td><td class="mono">${esc(d.mac || "")}</td>
     <td>${time(d.first_seen)}</td><td>${time(d.last_seen)}</td><td class="num">${d.packets.toLocaleString()}</td></tr>`, "No devices seen yet.");
   if (currentTab === "response") loadResponses(); else updateResponseCount();
+  if (currentTab === "story") loadStory(); else updateStoryCount();
+  if (currentTab === "privacy") loadPrivacy();
 }
 
 // ------------------------------------------------------------------ upload
@@ -694,8 +787,8 @@ function markdown(text) {
   return html;
 }
 const stepList = (steps) => steps.map((s) => `<code>${esc(s.tool)}${Object.keys(s.input).length ? "(" + esc(Object.values(s.input).join(", ")) + ")" : ""}</code>`).join(" → ");
-async function runAgent(url, body) {
-  const out = $("agent-out"), buttons = [$("investigate"), $("ask")];
+async function runAgent(url, body, outId = "agent-out") {
+  const out = $(outId), buttons = [$("investigate"), $("ask"), $("story-ask")];
   buttons.forEach((b) => (b.disabled = true));
   out.innerHTML = `<p class="steps" id="agent-progress">Starting the investigation…</p>`;
   const timer = setInterval(async () => {
@@ -819,6 +912,7 @@ const SETTINGS = [
   ["beacon_max_jitter", "Calling home: timing variation", "0.15 means the gaps vary by 15% or less"],
   ["beacon_min_interval", "Calling home: shortest gap (s)", ""],
   ["new_device_warmup", "New devices: learning time (s)", "Devices that appear later are reported"],
+  ["tls_learn_seconds", "Encrypted programs: learning time (s)", "Programs (TLS fingerprints) a device uses later without naming a website are reported"],
   ["watch_countries", "Countries to watch", "Codes such as KP,IR. Needs the country database."],
   ["alert_cooldown", "Repeat an alert after (s)", "The same alert is not raised again sooner"],
 ];
@@ -858,6 +952,108 @@ $("settings-save").onclick = async () => {
 $("notify-test").onclick = async () => {
   try { await api("/api/notify/test", {}); toast("Test notification sent."); loadSettings(); }
   catch (err) { toast(err.message); }
+};
+
+// ------------------------------------------------------------------ attack story
+let storyKey = "", replaying = false;
+const stageSev = (inc, stage) => {
+  const steps = inc.steps.filter((x) => x.stage === stage);
+  return steps.length ? steps.map((x) => x.severity).sort((a, b) => SEV_RANK[a] - SEV_RANK[b])[0] : "";
+};
+async function updateStoryCount() {
+  try { const r = await api("/api/story"); $("n-story").hidden = !r.incidents.length; $("n-story").textContent = r.incidents.length; } catch {}
+}
+async function loadStory(force = false) {
+  if (replaying) return;
+  let r;
+  try { r = await api("/api/story"); } catch { return; }
+  $("n-story").hidden = !r.incidents.length; $("n-story").textContent = r.incidents.length;
+  const key = JSON.stringify(r.incidents.map((i) => [i.id, i.steps.length, i.steps.map((x) => x.count)]));
+  if (key === storyKey && !force) return;
+  storyKey = key;
+  $("stories").innerHTML = r.incidents.length ? r.incidents.map((inc, n) => `<article class="story" data-n="${n}">
+      <div class="story-head"><h3>${esc(inc.title)}</h3>
+        <div class="buttons"><span class="sev ${inc.severity}">${inc.severity}</span>
+          <span class="muted">${time(inc.start)}${inc.end > inc.start ? "–" + time(inc.end) : ""}</span>
+          <button class="ghost small" data-replay="${n}">Replay</button></div></div>
+      <div class="chain" aria-label="Attack stages reached">${r.stages.map((st) => {
+        const sv = stageSev(inc, st);
+        return `<div class="${sv ? "hit " + sv : ""}">${esc(st)}<small>${sv ? "seen" : "not seen"}</small></div>`; }).join("")}</div>
+      <p class="narrative">${esc(inc.story)}</p>
+      <ol class="tl">${inc.steps.map((x) => `<li><span class="t">${esc(x.time)}</span><span class="pin ${x.severity}"></span>
+        <div><div class="stage">${esc(x.stage)}</div><div><b>${esc(x.text)}</b>${x.count > 1 ? ` <span class="muted">×${x.count}</span>` : ""}</div>
+        <div class="detail">${esc(x.detail)}</div></div></li>`).join("")}</ol>
+    </article>`).join("")
+    : `<p class="empty">No attacks detected, so there is no story to tell. When alerts appear, they are joined into chains here.</p>`;
+}
+$("stories").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-replay]");
+  if (!b || replaying) return;
+  const items = [...b.closest(".story").querySelectorAll(".tl li")];
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  replaying = true; b.disabled = true;
+  items.forEach((li) => li.classList.add("future"));
+  for (const li of items) {
+    items.forEach((x) => x.classList.remove("now"));
+    li.classList.remove("future"); li.classList.add("now");
+    await new Promise((res) => setTimeout(res, reduce ? 150 : 900));
+  }
+  items.forEach((x) => x.classList.remove("now"));
+  replaying = false; b.disabled = false;
+});
+$("story-ask").onclick = () => runAgent("/api/agent/ask",
+  {question: "Tell the attack story: how do the incidents connect, in what order did things happen, which attack stages were reached and which were not, and what should I watch next?"}, "story-out");
+
+// ------------------------------------------------------------------ privacy
+let privacyKey = "";
+const CAT_RISK = {"TV viewing tracking": "high", "Fingerprinting": "high", "Advertising": "medium", "Analytics": "medium",
+  "Social network": "medium", "Telemetry": "low", "Service": ""};
+async function loadPrivacy(force = false) {
+  let r;
+  try { r = await api("/api/privacy"); } catch { return; }
+  const key = JSON.stringify([r.findings.length, r.devices.map((d) => [d.device, d.sent, d.parties.length])]);
+  if (key === privacyKey && !force) return;
+  privacyKey = key;
+  const trackerCos = new Set(r.devices.flatMap((d) => d.parties.filter((p) => p.category !== "service").map((p) => p.company)));
+  const countries = new Set(r.devices.flatMap((d) => d.countries));
+  $("p-kpis").innerHTML = `<div><b>${r.devices.length}</b><span>devices sending data out</span></div>
+    <div><b>${trackerCos.size}</b><span>tracking, ad or analytics companies</span></div>
+    <div><b>${r.findings.filter((f) => f.severity === "high").length}</b><span>serious privacy findings</span></div>
+    <div><b>${r.countries_known ? countries.size : "–"}</b><span>${r.countries_known ? "countries" : "countries (install GeoIP)"}</span></div>`;
+  $("p-findings").innerHTML = r.findings.length ? r.findings.map((f) => `<li><span class="rail ${f.severity}"></span>
+      <div><div>${esc(f.text)}</div>${f.tip ? `<div class="tip">What you can do: ${esc(f.tip)}</div>` : ""}</div></li>`).join("")
+    : `<li><span></span><p class="empty" style="padding:0">${r.names_known ? "No advertising, analytics or tracking services seen yet." : "Nothing identified yet. Outside servers are named from DNS replies and HTTPS website names as they arrive."}</p></li>`;
+  $("p-note").textContent = r.extra_list ? `Built-in list + ${r.extra_list.toLocaleString()} tracker domains (Disconnect)` : "Built-in tracker list";
+  $("p-devices").innerHTML = r.devices.length ? r.devices.map((d) => `<article class="dev">
+      <div><h3>${esc(d.hostname || d.kind || d.device)}</h3>
+        <div class="sub mono">${esc(d.hostname || d.kind ? d.device : "")}${d.hostname && d.kind ? " · " + esc(d.kind) : ""}</div></div>
+      <div class="sub">${d.companies} companies, ${d.trackers} of them tracking you. ${d.tracker_share > 0 && d.tracker_share < 0.01 ? "Under 1%" : Math.round(d.tracker_share * 100) + "%"} of what it sent went to trackers.</div>
+      <div class="share" title="Share of uploads that went to trackers"><span style="width:${Math.min(100, d.tracker_share * 100)}%"></span></div>
+      <div class="table-wrap"><table><thead><tr><th>Company</th><th>Kind</th><th class="num">Sent</th></tr></thead><tbody>
+        ${d.parties.slice(0, 10).map((p) => `<tr><td>${esc(p.company)}<div class="muted mono" style="font-size:12px">${esc(p.domains.slice(0, 2).join(", "))}${p.countries.length ? " · " + esc(p.countries.join(", ")) : ""}</div>
+          ${p.cloaked.length ? `<div class="warning" style="margin:2px 0 0">Hidden tracker: ${esc(p.cloaked[0])}</div>` : ""}</td>
+          <td><span class="chip ${CAT_RISK[p.category_label] || ""}">${esc(p.category_label)}</span></td><td class="num">${size(p.sent)}</td></tr>`).join("")}
+      </tbody></table></div></article>`).join("")
+    : `<p class="empty">No devices have sent data outside your network yet.</p>`;
+}
+
+// ------------------------------------------------------------------ self-test
+function drawDrills(r, health) {
+  if (r && r.results) {
+    $("drills").innerHTML = r.results.map((x) => `<li><span class="${x.ok ? "ok" : "bad"}">${x.ok ? "OK" : "MISSED"}</span>
+      <span><b>${esc(x.drill)}</b> <span class="muted">${esc(x.imitates)}</span>${x.fix ? `<div class="warning" style="margin:2px 0 0">${esc(x.fix)}</div>` : ""}</span></li>`).join("")
+      + `<li class="muted"><span></span><span>Last run ${time(r.ts)}: ${r.passed} of ${r.total} detected. For a test with real packets, run <code>python3 labs/self_lab.py</code>.</span></li>`;
+  }
+  if (health) $("capture-health").textContent = health.state === "not live" ? "" : `Capture: ${health.state}. ${health.detail}`;
+}
+async function loadHealth() {
+  try { const h = await api("/api/health"); drawDrills(h.self_test, h.capture); } catch {}
+}
+$("selftest-run").onclick = async () => {
+  $("selftest-run").disabled = true;
+  try { const r = await api("/api/selftest", {}); drawDrills(r); toast(r.ok ? `Self-test passed: ${r.passed} of ${r.total} drills detected.` : `Self-test: ${r.total - r.passed} drill(s) missed. See the list.`); refresh(); }
+  catch (err) { toast(err.message); }
+  $("selftest-run").disabled = false;
 };
 
 refresh();

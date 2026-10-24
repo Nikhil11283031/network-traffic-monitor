@@ -7,9 +7,26 @@ import time
 from scapy.all import ARP, DNS, DNSQR, ICMP, IP, TCP, UDP, Ether, IPv6, PcapReader, sniff
 
 from .analyzer import Analyzer, PacketInfo
+from .payload import TLSReassembler, dhcp_hostname, dns_answers, parse_client_hello
 
 
-def to_packet_info(pkt) -> PacketInfo | None:
+def _extras(proto: str, sport, dport, payload: bytes, flow, tls: TLSReassembler | None) -> dict:
+    """Readable connection details (website names, fingerprints, device names) - see payload.py."""
+    if not payload:
+        return {}
+    if proto == "TCP":
+        hello = tls.feed(flow, payload) if tls is not None else parse_client_hello(payload)
+        return {"tls_sni": hello["sni"], "ja4": hello["ja4"]} if hello else {}
+    if sport == 53:
+        answers = dns_answers(payload)
+        return {"dns_answers": tuple(answers)} if answers else {}
+    if dport == 67 or sport == 68:
+        name = dhcp_hostname(payload)
+        return {"hostname": name} if name else {}
+    return {}
+
+
+def to_packet_info(pkt, tls: TLSReassembler | None = None) -> PacketInfo | None:
     """Pull out the fields the analyser needs. Returns None for packets it cannot use."""
     ts = float(pkt.time)
     length = len(pkt)
@@ -29,22 +46,24 @@ def to_packet_info(pkt) -> PacketInfo | None:
         return None
 
     if TCP in pkt:
-        return PacketInfo(ts, src, dst, "TCP", length, pkt[TCP].sport, pkt[TCP].dport,
-                          flags=str(pkt[TCP].flags), src_mac=mac)
+        t = pkt[TCP]
+        extra = _extras("TCP", t.sport, t.dport, bytes(t.payload), (src, t.sport, dst, t.dport), tls)
+        return PacketInfo(ts, src, dst, "TCP", length, t.sport, t.dport, flags=str(t.flags), src_mac=mac, **extra)
     if UDP in pkt:
+        u = pkt[UDP]
         query = None
-        if DNS in pkt and pkt[DNS].qr == 0 and DNSQR in pkt:
+        if DNS in pkt and pkt[DNS].qr == 0 and DNSQR in pkt and u.dport == 53:
             query = pkt[DNSQR].qname.decode(errors="replace")
-        proto = "DNS" if (pkt[UDP].dport == 53 or pkt[UDP].sport == 53) else "UDP"
-        return PacketInfo(ts, src, dst, proto, length, pkt[UDP].sport, pkt[UDP].dport,
-                          dns_query=query, src_mac=mac)
+        proto = "DNS" if (u.dport == 53 or u.sport == 53) else "UDP"
+        extra = _extras("UDP", u.sport, u.dport, bytes(u.payload), None, None)
+        return PacketInfo(ts, src, dst, proto, length, u.sport, u.dport, dns_query=query, src_mac=mac, **extra)
     if ICMP in pkt:
         return PacketInfo(ts, src, dst, "ICMP", length, src_mac=mac)
     return PacketInfo(ts, src, dst, "OTHER", length, src_mac=mac)
 
 
-def _handle(analyzer: Analyzer, pkt, on_alert):
-    info = to_packet_info(pkt)
+def _handle(analyzer: Analyzer, pkt, on_alert, tls=None):
+    info = to_packet_info(pkt, tls)
     if info is None:
         return
     for alert in analyzer.process(info):
@@ -55,7 +74,8 @@ def _handle(analyzer: Analyzer, pkt, on_alert):
 def live_capture(analyzer: Analyzer, iface: str | None = None, bpf: str | None = None, on_alert=None,
                  stop_event=None):
     """Watch a network interface. Needs administrator rights (sudo on macOS and Linux)."""
-    sniff(iface=iface, filter=bpf, store=False, prn=lambda pkt: _handle(analyzer, pkt, on_alert),
+    tls = TLSReassembler()
+    sniff(iface=iface, filter=bpf, store=False, prn=lambda pkt: _handle(analyzer, pkt, on_alert, tls),
           stop_filter=(lambda _pkt: stop_event.is_set()) if stop_event else None)
 
 
@@ -69,7 +89,7 @@ def _mac(raw: bytes) -> str:
     return ":".join(f"{b:02x}" for b in raw)
 
 
-def _dpkt_info(ts: float, buf: bytes, linktype: int):
+def _dpkt_info(ts: float, buf: bytes, linktype: int, tls: TLSReassembler | None = None):
     """The same PacketInfo as to_packet_info(), parsed with dpkt - about 10 times faster than scapy."""
     import socket
 
@@ -112,7 +132,8 @@ def _dpkt_info(ts: float, buf: bytes, linktype: int):
     l4 = l3.data
     if isinstance(l4, dpkt.tcp.TCP):
         flags = "".join(letter for bit, letter in _TCP_LETTERS if l4.flags & bit)
-        return PacketInfo(ts, src, dst, "TCP", length, l4.sport, l4.dport, flags=flags, src_mac=mac)
+        extra = _extras("TCP", l4.sport, l4.dport, bytes(l4.data), (src, l4.sport, dst, l4.dport), tls)
+        return PacketInfo(ts, src, dst, "TCP", length, l4.sport, l4.dport, flags=flags, src_mac=mac, **extra)
     if isinstance(l4, dpkt.udp.UDP):
         query = None
         is_dns = l4.dport == 53 or l4.sport == 53
@@ -123,8 +144,9 @@ def _dpkt_info(ts: float, buf: bytes, linktype: int):
                     query = dns.qd[0].name + "."
             except (dpkt.UnpackError, IndexError, ValueError, UnicodeDecodeError):
                 pass
+        extra = _extras("UDP", l4.sport, l4.dport, bytes(l4.data), None, None)
         return PacketInfo(ts, src, dst, "DNS" if is_dns else "UDP", length, l4.sport, l4.dport,
-                          dns_query=query, src_mac=mac)
+                          dns_query=query, src_mac=mac, **extra)
     if isinstance(l4, (dpkt.icmp.ICMP, dpkt.icmp6.ICMP6)):
         return PacketInfo(ts, src, dst, "ICMP", length, src_mac=mac)
     return PacketInfo(ts, src, dst, "OTHER", length, src_mac=mac)
@@ -139,8 +161,9 @@ def iter_pcap_fast(path: str):
         f.seek(0)
         reader = dpkt.pcapng.Reader(f) if magic == b"\x0a\x0d\x0d\x0a" else dpkt.pcap.Reader(f)
         linktype = reader.datalink()
+        tls = TLSReassembler()
         for ts, buf in reader:
-            info = _dpkt_info(float(ts), buf, linktype)
+            info = _dpkt_info(float(ts), buf, linktype, tls)
             if info is not None:
                 yield info
 
@@ -172,6 +195,7 @@ def read_pcap(analyzer: Analyzer, path: str, speed: float = 0, on_alert=None, pr
             if progress and count % 100_000 == 0:
                 progress(count)
     else:
+        tls = TLSReassembler()
         with PcapReader(path) as reader:
             for pkt in reader:
                 if speed > 0:
@@ -179,7 +203,7 @@ def read_pcap(analyzer: Analyzer, path: str, speed: float = 0, on_alert=None, pr
                     if previous is not None and now > previous:
                         time.sleep(min((now - previous) / speed, 2.0))
                     previous = now
-                _handle(analyzer, pkt, on_alert)
+                _handle(analyzer, pkt, on_alert, tls)
     for alert in analyzer.finish():
         if on_alert:
             on_alert(alert)

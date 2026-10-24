@@ -49,6 +49,10 @@ class PacketInfo:
     flags: str = ""  # TCP flags, e.g. "S" for SYN, "SA" for SYN-ACK
     dns_query: str | None = None
     src_mac: str | None = None
+    dns_answers: tuple = ()  # (name asked, address, name holding the address) from a DNS reply
+    tls_sni: str | None = None  # website name from a TLS ClientHello
+    ja4: str | None = None  # JA4 fingerprint of the program that opened the TLS connection
+    hostname: str | None = None  # name a device gave itself in a DHCP request
 
 
 @dataclass
@@ -68,6 +72,7 @@ class Config:
     beacon_min_connections: int = 10  # regular connections to the same outside server ...
     beacon_max_jitter: float = 0.15  # ... whose gaps vary by at most 15% ...
     beacon_min_interval: float = 5.0  # ... and are at least this many seconds apart
+    tls_learn_seconds: float = 60.0  # learn which programs (TLS fingerprints) each device uses for this long
     watch_countries: str = ""  # comma-separated country codes to alert on, e.g. "KP,IR" (needs GeoIP data)
     alert_cooldown: float = 60.0  # do not repeat the same alert within this many seconds
     max_alerts: int = 500
@@ -132,13 +137,23 @@ def base_domain(name: str) -> str:
 LOCAL_NETWORKS = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")]
 
 
+_PRIVATE_172 = tuple(f"172.{n}." for n in range(16, 32))
+
+
 @functools.lru_cache(maxsize=65536)
-def is_local(ip: str) -> bool:
+def _is_local_v6(ip: str) -> bool:
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return False
     return any(addr in net for net in LOCAL_NETWORKS)
+
+
+def is_local(ip: str) -> bool:
+    if ":" in ip:  # IPv6 (or a MAC address, which is not an IP and gives False)
+        return _is_local_v6(ip)
+    # IPv4 addresses come from packet parsers as dotted decimal, so a prefix check is exact and much faster.
+    return ip.startswith(("10.", "192.168.")) or ip.startswith(_PRIVATE_172)
 
 
 class _Window:
@@ -166,7 +181,9 @@ class _Window:
 
 
 class Analyzer:
-    def __init__(self, config: Config | None = None, intel=None, ml=None, geo=None):
+    def __init__(self, config: Config | None = None, intel=None, ml=None, geo=None, privacy=None):
+        from .privacy import PrivacyTracker
+
         self.config = config or Config()
         self.intel = intel  # ThreatIntel blocklists (optional)
         self.ml = ml  # AnomalyDetector (optional)
@@ -196,6 +213,9 @@ class Analyzer:
         self._beacon: dict[tuple, deque] = defaultdict(lambda: deque(maxlen=24))
         self.ip_mac: dict[str, str] = {}  # local IP -> MAC address it was first seen with
         self._country_alerted: set = set()
+        self.privacy = privacy if privacy is not None else PrivacyTracker(geo)  # see privacy.py
+        self.tls_clients: dict[str, Counter] = defaultdict(Counter)  # device -> {JA4 fingerprint: connections}
+        self.tls_first: dict[str, float] = {}  # device -> when its first TLS connection was seen
 
     # ------------------------------------------------------------------ processing
 
@@ -229,6 +249,9 @@ class Analyzer:
             for anomaly in self.ml.observe(p):
                 self._ml_alert(anomaly, new_alerts)
         self.host_peers[p.src][p.dst] += p.length
+        self.privacy.observe(p)
+        if p.ja4:
+            self._check_tls(p, new_alerts)
 
         is_syn = p.proto == "TCP" and "S" in p.flags and "A" not in p.flags
         starts_conversation = is_syn or p.proto in ("UDP", "DNS")
@@ -343,6 +366,30 @@ class Analyzer:
                         f"({len(recent)} times, timing varies only {jitter * 100:.0f}%) - malware often "
                         "\"calls home\" to its server on a timer.", cooldown=1800)  # once per 30 minutes
 
+    def _check_tls(self, p: PacketInfo, new_alerts: list[Alert]):
+        """Encrypted traffic: HTTPS hides the content, but the ClientHello's JA4 fingerprint shows which program
+        opened the connection. Two checks:
+        1. The fingerprint is on a threat-intelligence list (a known malware or attack tool).
+        2. After a learning period, a device uses a program it has never used before, to an outside server,
+           without naming a website (no SNI). Browsers and apps almost always name the site; malware and
+           remote-access tools connecting to a bare IP address often do not."""
+        if self.intel is not None and p.ja4 in getattr(self.intel, "ja4", {}):
+            self._alert(new_alerts, p.ts, "high", "Threat intel", p.src, p.dst,
+                        f"{p.src} opened an encrypted connection to {p.dst} with a program whose TLS fingerprint "
+                        f"({p.ja4}) is on the blocklist \"{self.intel.ja4[p.ja4]}\".")
+        if not is_local(p.src):
+            return
+        seen = self.tls_clients[p.src]
+        first = self.tls_first.setdefault(p.src, p.ts)
+        new = p.ja4 not in seen
+        seen[p.ja4] += 1
+        if (new and not p.tls_sni and not is_local(p.dst) and p.ts - first >= self.config.tls_learn_seconds
+                and len(seen) > 1):
+            self._alert(new_alerts, p.ts, "medium", "Unusual TLS client", p.src, p.dst,
+                        f"{p.src} opened an encrypted connection to {p.dst} with a program it has not used before "
+                        f"(TLS fingerprint {p.ja4}) and without naming a website. Browsers and apps almost always "
+                        "name the site; malware and remote-access tools often do not.")
+
     def _ml_alert(self, a: dict, new_alerts: list[Alert]):
         self._alert(new_alerts, a["ts"], "medium", "Anomaly (ML)", a["host"], "behaviour",
                     f"Machine learning flagged {a['host']} as unusual (anomaly score {a['score']}): "
@@ -387,6 +434,8 @@ class Analyzer:
                             + " joined the network.")
         device["last_seen"] = p.ts
         device["packets"] += 1
+        if p.hostname:
+            device["hostname"] = p.hostname
         if p.src_mac and not device["mac"]:
             device["mac"] = p.src_mac
 
@@ -445,6 +494,7 @@ class Analyzer:
                 "distinct_ports_contacted": len(self.host_ports[ip]),
                 "country": self.country(ip),
                 "dns_lookups": [{"name": d, "count": n} for d, n in self.host_dns[ip].most_common(10)],
+                "tls_programs": [{"ja4": j, "connections": n} for j, n in self.tls_clients.get(ip, Counter()).most_common(8)],
                 "alerts": [asdict(a) for a in self.alerts if ip in (a.source, a.target.split(":")[0])],
             }
 

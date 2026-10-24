@@ -171,7 +171,7 @@ def test_agent_sees_mitre_intel_and_ml():
     read_pcap(a, str(ROOT / "samples" / "demo.pcap"))
     overview = Toolbox(a).run("get_overview", {})
     assert overview["incidents"][0]["type"] == "Threat intel"  # most serious first
-    assert overview["machine_learning"]["state"] == "active" and overview["threat_intel"]["indicators"] == 2
+    assert overview["machine_learning"]["state"] == "active" and overview["threat_intel"]["indicators"] == 3
     alerts = Toolbox(a).run("list_alerts", {"kind": "Port scan"})["alerts"]
     assert alerts[0]["mitre_attack"] == ["T1046 Network Service Discovery (Discovery)"] and "ts" not in alerts[0]
     report = OfflineAnalyst(a).answer("Investigate").report

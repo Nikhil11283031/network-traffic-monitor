@@ -29,6 +29,8 @@ TECHNIQUES = {
     "T1557.002": ("Adversary-in-the-Middle: ARP Cache Poisoning", "Credential Access"),
     "T1110": ("Brute Force", "Credential Access"),
     "T1029": ("Scheduled Transfer", "Exfiltration"),
+    "T1573": ("Encrypted Channel", "Command and Control"),
+    "T1071.001": ("Application Layer Protocol: Web Protocols", "Command and Control"),
 }
 
 # Risky ports -> the technique that service is usually abused for.
@@ -54,6 +56,7 @@ KIND_TECHNIQUES = {
     "Brute force": ["T1110"],
     "Beaconing": ["T1071", "T1029"],
     "Watched country": [],
+    "Unusual TLS client": ["T1573", "T1071.001"],
     "Anomaly (ML)": [],  # an anomaly is "something unusual", not a specific technique
 }
 

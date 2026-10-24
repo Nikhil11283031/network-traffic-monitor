@@ -63,6 +63,22 @@ def create_app(analyzer: Analyzer | None = None, source: str = "", agent: Securi
         snap["status"] = monitor.status()
         return jsonify(snap)
 
+    @app.get("/api/privacy")
+    def privacy():
+        return jsonify(monitor.analyzer.privacy.report())
+
+    @app.get("/api/story")
+    def story():
+        return jsonify(monitor.story())
+
+    @app.get("/api/health")
+    def health():
+        return jsonify(monitor.health())
+
+    @app.post("/api/selftest")
+    def selftest():
+        return jsonify(monitor.run_self_test())
+
     # ------------------------------------------------------------------ AI analyst
 
     @app.post("/api/agent/investigate")

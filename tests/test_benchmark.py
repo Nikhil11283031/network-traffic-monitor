@@ -22,7 +22,7 @@ def test_fast_reader_matches_scapy_exactly():
 
     slow = [p for p in (to_packet_info(x) for x in PcapReader(DEMO)) if p]
     fast = list(iter_pcap_fast(DEMO))
-    assert len(fast) == len(slow) == 6264
+    assert len(fast) == len(slow) == 6565
     assert [astuple(p) for p in fast] == [astuple(p) for p in slow]
 
 
@@ -85,12 +85,12 @@ def test_known_answer_benchmark_on_demo(tmp_path):
 
     truth = load_truth(str(ROOT / "samples" / "demo-truth.json"))
     result = run(DEMO, truth, Analyzer(intel=ThreatIntel().load_dir(ROOT / "intel"), ml=AnomalyDetector()))
-    assert result["detected"] == result["in_scope"] == 7
-    assert result["detected_by_right_detector"] == 7
+    assert result["detected"] == result["in_scope"] == 8
+    assert result["detected_by_right_detector"] == 8
     assert result["false_positives"] == 0 and result["precision"] == 1.0
-    assert result["packets"] == 6264
+    assert result["packets"] == 6565
     text = markdown(result, "Demo")
-    assert "| Attacks detected (in scope) | 7 of 7 (100.0%) |" in text
+    assert "| Attacks detected (in scope) | 8 of 8 (100.0%) |" in text
     json.dumps(result, default=str)
 
 
@@ -99,7 +99,7 @@ def test_benchmark_cli(tmp_path, capsys):
 
     assert main(["benchmark", DEMO, "--truth", str(ROOT / "samples" / "demo-truth.json"), "--no-ml",
                  "--ml-learn", "40", "--out", str(tmp_path)]) == 0
-    assert (tmp_path / "demo.md").exists() and json.loads((tmp_path / "demo.json").read_text())["in_scope"] == 7
+    assert (tmp_path / "demo.md").exists() and json.loads((tmp_path / "demo.json").read_text())["in_scope"] == 8
 
 
 def test_truncated_capture_uses_real_packet_size(tmp_path):

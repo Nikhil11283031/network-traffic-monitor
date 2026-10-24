@@ -10,10 +10,23 @@ rules, **threat-intelligence blocklists** and **machine learning**, tags every f
 technique, and shows it all on a live web dashboard with an **AI security analyst**. It can capture live traffic
 from your own computer or analyse a saved `.pcap` capture file (for example one recorded with Wireshark).
 
+**What makes it different** (most tools do one of these; this one does all four)
+
+- **Privacy X-ray** - which companies and countries each device (TV, phone, laptop) sends data to, how much, and
+  which of them are advertisers, analytics or TV viewing trackers - including trackers hidden behind a site's own
+  name (CNAME cloaking) - with what you can do about each.
+- **Encrypted-traffic detection** - spots unknown programs inside HTTPS without decrypting anything, from the
+  JA4 TLS fingerprint of each connection, and matches fingerprints against blocklists.
+- **Self-testing** - textbook attacks are replayed into a sandbox with your settings every few hours; if a
+  detector would miss one (for example after a setting was raised too far), you are told. Proof it still works.
+- **Attack story** - alerts are joined into chains on the attack kill chain (initial access, reconnaissance,
+  credential access, command and control, exfiltration), including attacks that spread from one device to
+  another, with a replay and a plain-language story that says which stages were *not* reached.
+
 **Highlights**
 
-- Nine rule-based detectors: port scan, SYN flood, brute-force logins, ARP spoofing (man-in-the-middle),
-  malware beaconing, risky ports, data exfiltration, DNS tunnelling and new devices
+- Ten rule-based detectors: port scan, SYN flood, brute-force logins, ARP spoofing (man-in-the-middle),
+  malware beaconing, risky ports, data exfiltration, DNS tunnelling, unusual encrypted programs and new devices
 - Threat intelligence from free public blocklists (abuse.ch Feodo Tracker, Spamhaus DROP, URLhaus domains)
 - GeoIP: the country of every outside server, with alerts for countries you choose to watch
 - Unsupervised ML anomaly detection (Isolation Forest) that learns your network's normal behaviour
@@ -26,9 +39,13 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 - MCP server, so Claude Desktop and other AI apps can query the monitor
 - Accuracy benchmark against public datasets (CIC-IDS2017, UNSW-NB15) with detection rate, time to detect,
   precision and false alarms per hour
-- 66 automated tests, GitHub Actions CI and a Docker image
+- 84 automated tests, GitHub Actions CI and a Docker image
 
 ![Dashboard](docs/dashboard.png)
+
+| Attack story | Privacy X-ray |
+| --- | --- |
+| ![Attack story](docs/story.png) | ![Privacy X-ray](docs/privacy.png) |
 
 ## What it detects
 
@@ -46,6 +63,8 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 | **Beaconing** | Medium | A device connects to the same outside server 10+ times at regular intervals (gaps vary by 15% or less) - how malware "calls home" to its command server. Ten, not eight, because the benchmark showed random traffic occasionally looks regular for eight connections. |
 | **Watched country** | Medium | A device talks to a server in a country on your watch list (needs the GeoIP database). |
 | **Anomaly (ML)** | Medium | The machine-learning model finds a device behaving unlike anything it learned as normal. |
+| **Unusual TLS client** | Medium | After learning for 60 seconds which programs each device uses (by JA4 TLS fingerprint), a device opens an encrypted connection to an outside server with a program it never used before **and** without naming a website. |
+| **Self-test** | Medium | Live mode: a detection drill was missed, so your settings would miss that attack. |
 
 Repeated alerts for the same thing are grouped (one alert per minute; beaconing once per 30 minutes), so the
 list stays readable. Every limit can be changed live on the dashboard's **Settings** tab (or in `Config` in
@@ -124,6 +143,87 @@ your network and flags behaviour that does not fit (`netmon/ml.py`):
 
 On the demo capture it flags the intruder, the phone's upload and the TV's DNS leak, and never the normal
 laptop. The dashboard shows whether it is still learning or active. Turn it off with `--no-ml`.
+
+## Privacy X-ray
+
+Smart TVs, phones and apps quietly report to advertisers, analytics companies and manufacturers. The **Privacy
+X-ray** tab shows, per device, every company it sends data to, how much, which category it is (advertising,
+analytics, TV viewing tracking, telemetry, social network, fingerprinting or an ordinary service) and, with
+the GeoIP database, the countries. Each finding comes with what you can do about it (for example the TV
+setting that turns off viewing tracking).
+
+How the companies are found, without decrypting anything (`netmon/payload.py`, `netmon/privacy.py`):
+
+1. **DNS replies** say which name an address belongs to. CNAME chains are followed, which exposes **CNAME
+   cloaking**: a tracker hidden behind a site's own name (`metrics.shop.example -> shop.eulerian.net`), which
+   ordinary ad blockers miss.
+2. The **website name (SNI)** that opens every HTTPS connection.
+3. **DHCP requests**, where devices announce their own name ("Nikhils-iPhone").
+
+Names are matched to companies with a built-in list of well-known services and trackers. `python3 -m netmon
+update-privacy` adds Disconnect's open list of about 4,000 tracker domains. **That list is licensed CC BY-NC-SA
+4.0: free for personal and non-commercial use only**, so it is downloaded on request and never shipped in the
+project. The built-in list is part of this project.
+
+```bash
+python3 -m netmon privacy capture.pcap     # the same report in the terminal
+```
+
+Limits: devices using encrypted DNS (DNS over HTTPS) hide their lookups, so names then come only from HTTPS
+website names. HTTP/3 (QUIC) connections are named only through DNS. Encrypted Client Hello (ECH), still rare,
+hides the website name.
+
+## Encrypted traffic: JA4 TLS fingerprints
+
+HTTPS hides what is said, but not which program says it. The first message of every TLS connection (the
+ClientHello) lists the encryption options the program supports, in its own order. That list is summarised as
+a **JA4 fingerprint** ([FoxIO JA4](https://github.com/FoxIO-LLC/ja4), BSD licence; the implementation is
+checked against the specification's published example). Chrome, Safari, curl and malware toolkits all have
+different fingerprints.
+
+- **Blocklist**: JA4 fingerprints of known malware tools can be put in any `intel/*.txt` list, next to IPs and
+  domains. A match is a high-severity **Threat intel** alert.
+- **Unusual TLS client**: the monitor learns which programs each device uses. A new program that connects to
+  an outside server *without naming a website* is reported - browsers and apps almost always name the site,
+  malware and remote-access tools connecting to a bare address often do not.
+- ClientHellos split over several packets (modern browsers with post-quantum key exchange) are reassembled.
+- Each device's programs are shown to the AI analyst (`tls_programs` in `get_host_activity`).
+
+## Self-test: proof that it still works
+
+Security tools fail silently: a setting raised too far, a blocklist that stopped loading or a capture that
+stopped receiving packets all look exactly like "no attacks". The self-test (`netmon/selftest.py`) replays
+textbook attacks - an nmap-style scan of 1,000 ports, 64 SSH logins a minute, a 2,000-per-second SYN flood, a
+20 MB upload, DNS tunnelling with 60-character names, a malware beacon every 60 seconds, ARP spoofing, Telnet,
+an unknown encrypted program and a blocklisted server - into a **separate sandbox analyser** with your current
+settings and blocklists. Nothing is sent on the network and nothing reaches your alerts or notifications.
+
+- In live mode it runs at start and every 6 hours (`--self-test-hours`); a missed drill raises a **Self-test**
+  alert naming the setting to fix. Capture health warns when packets stop arriving.
+- On the dashboard: Settings -> Self-test -> Run self-test now. The sidebar shows the last result.
+- From the terminal (exit code 1 if a drill is missed, useful in scripts):
+
+```bash
+python3 -m netmon selftest
+python3 -m netmon selftest --set port_scan_ports=40     # would this setting still catch a scan?
+```
+
+For an end-to-end test with real packets, use the self lab (`labs/self_lab.py`, see the benchmark section).
+
+## Attack story
+
+The **Attack story** tab joins alerts into incidents (`netmon/story.py`):
+
+1. Alerts are grouped by the device that did it; a MAC address (ARP spoofing) is mapped to its device.
+2. If an attacked device later acts suspiciously itself, the groups are joined: the attack spread (a scanned
+   laptop that then starts beaconing).
+3. Each step is placed on the attack chain, based on MITRE ATT&CK tactics: Initial access -> Reconnaissance
+   -> Credential access -> Command and control -> Exfiltration / impact.
+4. A plain-language story says what happened in order and which later stages were **not** seen, and what to
+   watch next ("no sign that it got in - watch the targets for calling home").
+
+The tab shows the chain, a timeline with a **Replay** button, and can ask the AI analyst to tell the story
+(the agent has a `get_attack_story` tool, plus `get_privacy_report` and `get_self_test`).
 
 ## Dashboard
 
@@ -289,8 +389,10 @@ python3 -m netmon pcap samples/demo.pcap --speed 5  # replays it 5x faster
 
 Open <http://127.0.0.1:5050>. Over about 20 seconds you will see normal traffic, then an unknown device join
 the network, port-scan a laptop, try Telnet on the router, pretend to be the router (ARP spoofing) and guess the
-laptop's SSH password, a smart TV "call home" every 8 seconds and leak data through DNS, and a phone upload 6 MB
-to an outside server. Each one appears as an alert.
+laptop's SSH password, a smart TV "call home" every 8 seconds, leak data through DNS and run an unknown
+encrypted program, and a phone upload 6 MB to an outside server. Each one appears as an alert, the **Attack
+story** tab joins them into three incidents, and the **Privacy X-ray** tab shows the TV reporting viewing data
+to Samsung, the phone talking to Facebook and Firebase analytics, and a tracker hidden behind a shop's own name.
 
 **2. Watch your own network live**
 
@@ -339,8 +441,9 @@ Docker runs inside a virtual machine, so live capture in a container only sees t
                                                                          (agent.py) ◄─► Claude API or Ollama (local)
 ```
 
-- `netmon/capture.py` reads packets with **scapy** and turns each one into a small `PacketInfo` record
-  (time, addresses, protocol, ports, TCP flags, DNS name, MAC address).
+- `netmon/capture.py` reads packets with **scapy** (or the 10x faster **dpkt** for files) and turns each one
+  into a small `PacketInfo` record (time, addresses, protocol, ports, TCP flags, DNS name and answers, website
+  name, JA4 fingerprint, device name, MAC address). `netmon/payload.py` parses DNS, TLS and DHCP from bytes.
 - `netmon/analyzer.py` keeps running statistics and applies the detection rules using **sliding time windows**
   based on each packet's own timestamp, so a saved capture gives exactly the same results as watching live.
 - `netmon/web.py` serves the dashboard; the page asks for a fresh snapshot every two seconds.
@@ -349,6 +452,8 @@ Docker runs inside a virtual machine, so live capture in a container only sees t
 - `netmon/monitor.py` ties a session together; `netmon/store.py` is the SQLite history; `netmon/notify.py`
   sends notifications; `netmon/responder.py` proposes firewall rules; `netmon/report.py` builds the PDF;
   `netmon/mcp_server.py` is the MCP server.
+- `netmon/privacy.py` is the Privacy X-ray, `netmon/selftest.py` the self-test and `netmon/story.py` the
+  attack story.
 - `netmon/agent.py` is the AI analyst; it reads the same analyser through read-only tools.
 - Capture runs in a background thread; a lock keeps the statistics consistent while the dashboard reads them.
 
@@ -397,37 +502,7 @@ not at the contents.
    again to see the effect - but tune on one day and report the results of the others, so the numbers stay honest.
 
 `samples/demo-truth.json` is the answer key for the demo capture; `python3 -m netmon benchmark samples/demo.pcap
---truth samples/demo-truth.json --ml-learn 40` checks the scoring itself (7 of 7 attacks, no false alarms).
-
-## Tests and CI
-
-```bash
-python3 -m pytest
-```
-
-GitHub Actions (`.github/workflows/tests.yml`) runs the tests on Python 3.10, 3.11 and 3.12 on every push, runs
-the demo, and builds and runs the Docker image. The badge at the top shows the result.
-
-38 tests cover MITRE tagging, every threat-intelligence feed format and the feed download, the ML detector
-(learning, flagging only unusual behaviour, the demo capture, running without scikit-learn), and each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary
-long domain names), configurable thresholds, an end-to-end run over the sample capture, and the AI agent: the
-tool-calling loop (with a scripted fake Claude client, so no API key is needed), the step limit, the offline
-fallback, bad tool input, clipping of long attacker-controlled strings, and the web endpoints.
-
-## Limitations and ideas
-
-- Encrypted traffic (HTTPS) is not decrypted; the monitor looks at who talks to whom, how much and when.
-- Rules are thresholds, so a slow scan spread over minutes is not caught. The ML detector helps, but it
-  only knows what it saw while learning; if an attack is already happening then, it is learned as normal.
-- Blocklists only know about servers that have already been reported.
-- ARP spoofing detection can also fire when a device legitimately gets a new network card or address.
-- Ideas: run at startup as a service, export alerts to a SIEM (Splunk, Elastic), TLS fingerprinting (JA3) to
-  recognise malware inside encrypted traffic.
-
-## Ethics
-
-Only monitor networks you own or have written permission to monitor. Capturing other people's traffic without
-permission is illegal in Australia and many other countries. The sample capture is fully simulated.
+--truth samples/demo-truth.json --ml-learn 40` checks the scoring itself (8 of 8 attacks, no false alarms).
 
 ### Self lab: test it on real traffic from your own computer
 
@@ -442,3 +517,38 @@ python3 -m netmon benchmark lab/lab.pcap --truth lab/lab-truth.json --ml-learn 5
 ```
 
 Nothing is sent to other devices or the internet, and `lab/` is ignored by git.
+
+## Tests and CI
+
+```bash
+python3 -m pytest
+```
+
+GitHub Actions (`.github/workflows/tests.yml`) runs the tests on Python 3.10, 3.11 and 3.12 on every push, runs
+the demo, and builds and runs the Docker image. The badge at the top shows the result.
+
+84 tests cover the JA4 fingerprint (against the specification's example), TLS reassembly, DNS/CNAME and DHCP
+parsing, the Privacy X-ray, the self-test (including that drills never reach the real alerts), the attack story
+(including an attack that spreads), MITRE tagging, every threat-intelligence feed format and the feed download, the ML detector
+(learning, flagging only unusual behaviour, the demo capture, running without scikit-learn), and each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary
+long domain names), configurable thresholds, an end-to-end run over the sample capture, and the AI agent: the
+tool-calling loop (with a scripted fake Claude client, so no API key is needed), the step limit, the offline
+fallback, bad tool input, clipping of long attacker-controlled strings, and the web endpoints.
+
+## Limitations and ideas
+
+- Encrypted traffic (HTTPS) is not decrypted; the monitor looks at who talks to whom, how much, when, the
+  website name and the program's TLS fingerprint. HTTP/3 (QUIC) ClientHellos are not fingerprinted yet.
+- Rules are thresholds, so a slow scan spread over minutes is not caught. The ML detector helps, but it
+  only knows what it saw while learning; if an attack is already happening then, it is learned as normal.
+- Blocklists only know about servers that have already been reported.
+- ARP spoofing detection can also fire when a device legitimately gets a new network card or address.
+- The "Unusual TLS client" rule learns for 60 seconds; a device that installs a new app which connects to a bare
+  address can trigger it legitimately (mark the alert as handled).
+- Ideas: run at startup as a service, export alerts to a SIEM (Splunk, Elastic), QUIC fingerprinting, naming
+  programs from public JA4 databases.
+
+## Ethics
+
+Only monitor networks you own or have written permission to monitor. Capturing other people's traffic without
+permission is illegal in Australia and many other countries. The sample capture is fully simulated.

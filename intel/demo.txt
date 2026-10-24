@@ -3,3 +3,5 @@
 # Run "python3 -m netmon update-intel" to download real, free blocklists into this folder.
 203.0.113.50
 cdn-sync.example
+# TLS fingerprint (JA4) of the made-up malware program in the demo
+t12i080500_70e03a12cf4c_9d5eba4487bd

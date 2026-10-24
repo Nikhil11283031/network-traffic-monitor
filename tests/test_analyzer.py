@@ -153,6 +153,7 @@ def test_sample_capture_end_to_end(tmp_path):
         ("ARP spoofing", "de:ad:be:ef:00:99"),
         ("Brute force", "192.168.1.99"),
         ("Beaconing", "192.168.1.12"),
+        ("Unusual TLS client", "192.168.1.12"),
     }
     assert len(snap["devices"]) == 5  # router (seen through its ARP announcement), laptop, phone, TV, intruder
     assert Path(path).stat().st_size > 0
