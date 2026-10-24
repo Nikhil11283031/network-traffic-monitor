@@ -55,8 +55,8 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 | **Port scan** | High | One host tries 15+ different ports on another host within 10 seconds (counts connection attempts only, so normal replies are ignored). |
 | **SYN flood** | High | 200+ connection attempts to one host within 5 seconds - a sign of a denial-of-service attack. |
 | **Risky port** | Medium | A connection to a service that is unsafe or often abused: FTP (21), Telnet (23), SMB (445), MS SQL (1433), RDP (3389), 4444 (common backdoor), VNC (5900), IRC (6667). |
-| **High traffic** | Medium | One host sends 5 MB+ within 10 seconds - a large upload could be data being stolen. |
-| **Suspicious DNS** | Medium | A DNS lookup with a very long (40+ characters) or random-looking name, measured with Shannon entropy. Malware uses this to hide data in DNS (DNS tunnelling) or to find its servers. |
+| **High traffic** | Medium | One of your own devices sends 5 MB+ within 10 seconds - a large upload could be data being stolen. Downloads (data coming in) do not count. |
+| **Suspicious DNS** | Medium | A DNS lookup with a very long (40+ characters) or random-looking name, measured with Shannon entropy. Malware uses this to hide data in DNS (DNS tunnelling) or to find its servers. Content-delivery networks (Akamai, Cloudflare, AWS...) that use random-looking names by design are ignored; the list is editable in Settings. |
 | **New device** | Low | A device that was not on the local network during the first 30 seconds appears. |
 | **Threat intel** | High | A device talks to, or looks up, an IP address or domain on a threat-intelligence blocklist. |
 | **ARP spoofing** | High | A device claims an IP address (usually the router's) that already belongs to another device's MAC address - the classic way to put yourself in the middle of other people's traffic. |
@@ -92,6 +92,7 @@ Every alert is tagged with the matching technique, shown as a link on the dashbo
 | ARP spoofing | T1557.002 Adversary-in-the-Middle: ARP Cache Poisoning | Credential Access |
 | Brute force | T1110 Brute Force | Credential Access |
 | Beaconing | T1071 Application Layer Protocol, T1029 Scheduled Transfer | Command and Control / Exfiltration |
+| Unusual TLS client | T1573 Encrypted Channel, T1071.001 Web Protocols | Command and Control |
 
 The mapping is the best match for what can be seen in traffic, not proof that the technique was used.
 
@@ -228,14 +229,18 @@ The tab shows the chain, a timeline with a **Replay** button, and can ask the AI
 
 ## Dashboard
 
-The dashboard has four tabs:
+The dashboard has six tabs:
 
-- **Overview** - live counters, chart, protocols, the alert list with **search, severity and type filters**
-  and a **Handled** button (with an optional note) to mark alerts you have dealt with, the AI analyst, top
-  talkers with country, ports, DNS lookups and devices.
+- **Overview** - network map, threat level, live counters, chart, protocols, the alert list with **search,
+  severity and type filters** and a **Handled** button (with an optional note) to mark alerts you have dealt
+  with, the AI analyst, top talkers with country, ports, DNS lookups and devices (with their names and IPv6
+  addresses).
+- **Attack story** - alerts joined into incidents on the attack chain, with a replay (see above).
+- **Privacy X-ray** - the companies, trackers and countries each device sends data to (see above).
 - **Response** - the responder's proposed actions (see below) to approve or dismiss.
 - **History** - every alert saved in the database across all runs, searchable, with "only not handled".
-- **Settings** - change any detection limit live, see the status of each component, send a test notification.
+- **Settings** - change any detection limit live, run the self-test, see the status of each component, send a
+  test notification.
 
 The toolbar can **analyse a capture file** you pick (it becomes a new session), **export** the alerts as CSV or
 JSON, and download a **PDF incident report** containing the analyst's findings, every alert with its MITRE
@@ -332,6 +337,10 @@ It works as a **tool-using agent loop** (`netmon/agent.py`):
 | `get_dns_lookups` | DNS names looked up by a host, or the top domains |
 | `lookup_port` | The service on a port and whether it is risky |
 | `get_response_playbook` | Standard response steps for an alert type |
+| `get_proposed_responses` | The responder's proposed actions and whether a person approved them |
+| `get_attack_story` | Alerts joined into attack chains, with what each address is (router, device, multicast, server) |
+| `get_privacy_report` | The Privacy X-ray: companies and trackers each device sends data to |
+| `get_self_test` | Runs the detection drills and reports which detectors would catch them |
 
 **Safety design**
 
@@ -340,6 +349,10 @@ It works as a **tool-using agent loop** (`netmon/agent.py`):
 - **Prompt-injection defence.** Packet contents (DNS names especially) are controlled by whoever sends the
   packets. An attacker could look up a name like `ignore-previous-instructions...`. The system prompt tells the
   model to treat all tool output as untrusted data, and long strings are cut to 120 characters.
+- **No made-up answers.** If nothing has been detected, the AI is not asked to tell an attack story (a small
+  model would invent one). Every AI answer is checked: if it names an IP address that never appeared in the
+  traffic, it is discarded and the built-in analyst answers instead, with a note saying why. The router and
+  multicast addresses are labelled for the model, which is told never to recommend isolating the router.
 - **Fallback.** Without an AI backend, or if it cannot be reached, a built-in **offline rule-based analyst**
   writes the report from the alerts and playbooks, so the tool always works.
 
