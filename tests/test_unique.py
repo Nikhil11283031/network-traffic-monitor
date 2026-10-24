@@ -243,3 +243,26 @@ def test_new_endpoints_and_tools(monkeypatch):
     offline = OfflineAnalyst(m.analyzer)
     assert "samsungacr" in offline.answer("Which companies is my TV sending data to? privacy").report
     assert "## Attack story" in offline.answer("What happened, as a story?").report
+
+
+def test_cdn_names_are_not_dns_tunnelling_and_router_is_labelled():
+    """Found in a live test: Akamai/Cloudflare names looked random, and the analyst wanted to isolate the router."""
+    from netmon.story import build
+
+    a = Analyzer()
+    for i, name in enumerate(["e6858.dsce9.akadns.net.", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4.cdn.cloudflare.net."]):
+        a.process(PacketInfo(T0 + i, "192.168.1.103", "192.168.1.1", "DNS", 90, 5000 + i, 53, dns_query=name))
+    assert not [x for x in a.alerts if x.kind == "Suspicious DNS"]
+    a.process(PacketInfo(T0 + 5, "192.168.1.103", "192.168.1.1", "DNS", 90, 5009, 53,
+                         dns_query="q8z3kd92mfp0xv7ls1tyq8z3kd92mfp0xv7ls1tyab.tunnel.example."))
+    assert [x for x in a.alerts if x.kind == "Suspicious DNS"]  # a real tunnel is still caught
+    assert a.gateway() == "192.168.1.1"
+    alerts = [{"id": "1", "ts": T0, "kind": "Port scan", "severity": "high", "source": "192.168.1.1",
+               "target": "192.168.1.103", "message": "x", "mitre": []},
+              {"id": "2", "ts": T0 + 60, "kind": "Beaconing", "severity": "medium", "source": "192.168.1.103",
+               "target": "224.0.0.251", "message": "y", "mitre": []}]
+    inc = build(alerts, gateway="192.168.1.1")["incidents"][0]
+    assert inc["roles"]["192.168.1.1"] == "your router" and inc["roles"]["224.0.0.251"].startswith("multicast")
+    assert any("never isolate your router" in c for c in inc["cautions"])
+    c = Config()
+    assert c.update({"dns_ignore_domains": "Example.NET, cdn.test"})["changed"]["dns_ignore_domains"] == "example.net,cdn.test"

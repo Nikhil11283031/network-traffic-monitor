@@ -67,7 +67,31 @@ def _host(value: str) -> str:
     return value.split(":")[0] if value.count(":") == 1 else value
 
 
-def build(alerts: list[dict], mac_to_ip: dict | None = None) -> dict:
+def role(ip: str, gateway: str | None = None) -> str:
+    """What an address is, in plain words - so neither a person nor the AI mistakes the router for an attacker."""
+    if ip == gateway:
+        return "your router"
+    first = ip.split(".")[0]
+    if ip == "255.255.255.255" or ip.lower().startswith("ff") or (first.isdigit() and 224 <= int(first) <= 239):
+        return "multicast/broadcast address (devices announcing themselves - not a server)"
+    if not is_local(ip):
+        return "a server on the internet" if any(c.isdigit() for c in ip) else "a domain name"
+    return "a device on your network"
+
+
+def _cautions(hosts: set, actors, gateway: str | None) -> list[str]:
+    notes = []
+    if gateway and gateway in actors:
+        notes.append(f"{gateway} is your router. Routers answer DNS lookups and pass on all traffic, so alerts that "
+                     "involve it are often normal behaviour - check before acting, and never isolate your router.")
+    multicast = sorted(h for h in hosts if role(h).startswith("multicast"))
+    if multicast:
+        notes.append(f"{', '.join(multicast)} is a multicast/broadcast address, not a server: devices use it to "
+                     "find printers, speakers and TVs. Traffic to it is not 'calling home'.")
+    return notes
+
+
+def build(alerts: list[dict], mac_to_ip: dict | None = None, gateway: str | None = None) -> dict:
     """Incidents with their chain of steps, most serious first. alerts are dicts as in Analyzer.snapshot()."""
     mac_to_ip = {k.lower(): v for k, v in (mac_to_ip or {}).items()}
     alerts = [a for a in alerts if a["kind"] != "Self-test"]
@@ -124,6 +148,9 @@ def build(alerts: list[dict], mac_to_ip: dict | None = None) -> dict:
                           "start": items[0]["ts"], "end": items[-1]["ts"], "actors": actors,
                           "victims": sorted({s["target"] for s in steps if is_local(s["target"])} - set(actors)),
                           "stages": stages_seen, "steps": _dedupe(steps),
+                          "roles": {h: role(h, gateway) for h in sorted({*actors, *(x["target"] for x in steps)})
+                                    if h not in ("any", "network", "behaviour", "detectors")},
+                          "cautions": _cautions({*actors, *(x["target"] for x in steps)}, actors, gateway),
                           "story": _narrative(actors, steps, stages_seen)})
     incidents.sort(key=lambda i: (SEVERITY_ORDER.get(i["severity"], 9), -len(i["stages"]), i["start"]))
     return {"incidents": incidents, "stages": STAGES}

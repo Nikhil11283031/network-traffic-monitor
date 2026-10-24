@@ -123,7 +123,7 @@ class Monitor:
 
         analyzer = self.analyzer
         mac_to_ip = {mac: ip for ip, mac in analyzer.ip_mac.items()}
-        return build(analyzer.snapshot()["alerts"], mac_to_ip)
+        return build(analyzer.snapshot()["alerts"], mac_to_ip, analyzer.gateway())
 
     def acknowledge(self, alert_id: str, note: str = "", acked: bool = True) -> bool:
         found = self.analyzer.acknowledge(alert_id, note, acked) is not None

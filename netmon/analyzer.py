@@ -90,6 +90,12 @@ class Config:
     beacon_max_jitter: float = 0.15  # ... whose gaps vary by at most 15% ...
     beacon_min_interval: float = 5.0  # ... and are at least this many seconds apart
     tls_learn_seconds: float = 60.0  # learn which programs (TLS fingerprints) each device uses for this long
+    # Content-delivery and cloud networks whose server names look random by design (e1234.dsce9.akadns.net).
+    dns_ignore_domains: str = ("akadns.net,akamaiedge.net,akamai.net,edgekey.net,edgesuite.net,akamaized.net,"
+                               "cloudflare.net,cloudfront.net,amazonaws.com,azureedge.net,azurefd.net,"
+                               "trafficmanager.net,msedge.net,office.net,fastly.net,fastly-edge.com,"
+                               "googleusercontent.com,gvt1.com,1e100.net,apple-dns.net,aaplimg.com,cdn-apple.com,"
+                               "icloud.com,llnwd.net,edgecastcdn.net,footprint.net")
     watch_countries: str = ""  # comma-separated country codes to alert on, e.g. "KP,IR" (needs GeoIP data)
     alert_cooldown: float = 60.0  # do not repeat the same alert within this many seconds
     max_alerts: int = 500
@@ -104,7 +110,8 @@ class Config:
             current = getattr(self, name)
             try:
                 if isinstance(current, str):
-                    value = ",".join(c.strip().upper() for c in str(raw).split(",") if c.strip())
+                    case = str.upper if name == "watch_countries" else str.lower
+                    value = ",".join(case(c.strip()) for c in str(raw).split(",") if c.strip())
                 else:
                     value = type(current)(raw)
                     if value <= 0 or (name == "beacon_max_jitter" and value >= 1):
@@ -115,6 +122,11 @@ class Config:
             setattr(self, name, value)
             changed[name] = value
         return {"changed": changed, "errors": errors}
+
+    def dns_ignored(self, name: str) -> bool:
+        """Whether a name belongs to a content-delivery network on the ignore list."""
+        name = name.rstrip(".").lower()
+        return any(name == d or name.endswith("." + d) for d in self.dns_ignore_domains.split(",") if d)
 
     def watched(self) -> set[str]:
         return {c for c in self.watch_countries.upper().split(",") if c}
@@ -218,6 +230,7 @@ class Analyzer:
         self.received: Counter = Counter()
         self.dst_ports: Counter = Counter()
         self.dns_domains: Counter = Counter()
+        self.dns_servers: Counter = Counter()  # local addresses that answer DNS lookups (usually the router)
         self.timeline: dict[int, list[int]] = {}  # second -> [packets, bytes]
         self.devices: dict[str, dict] = {}
         self.host_peers: dict[str, Counter] = defaultdict(Counter)  # host -> {other host: bytes sent to it}
@@ -341,11 +354,15 @@ class Analyzer:
         # come from malware that generates domain names.
         if p.dns_query:
             name = p.dns_query.rstrip(".").lower()
+            if is_local(p.dst):
+                self.dns_servers[p.dst] += 1
             self.dns_domains[base_domain(name)] += 1
             self.host_dns[p.src][name] += 1
             label = max(name.split("."), key=len)
             entropy = shannon_entropy(label)
-            if len(label) >= self.config.dns_label_length or (
+            if self.config.dns_ignored(name):
+                pass
+            elif len(label) >= self.config.dns_label_length or (
                 len(label) >= self.config.dns_entropy_min_length and entropy >= self.config.dns_entropy
             ):
                 base = base_domain(name)
@@ -492,6 +509,12 @@ class Analyzer:
                     alert.acked, alert.ack_note = acked, note[:500]
                     return alert
         return None
+
+    def gateway(self) -> str | None:
+        """The router: the local address devices send their DNS lookups to, or else the one ending in .1."""
+        if self.dns_servers:
+            return self.dns_servers.most_common(1)[0][0]
+        return next((ip for ip in self.devices if ip.endswith(".1")), None)
 
     def country(self, ip: str) -> str | None:
         return self.geo.country(ip) if self.geo is not None and not is_local(ip) else None

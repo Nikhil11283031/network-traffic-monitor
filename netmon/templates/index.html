@@ -913,6 +913,7 @@ const SETTINGS = [
   ["beacon_min_interval", "Calling home: shortest gap (s)", ""],
   ["new_device_warmup", "New devices: learning time (s)", "Devices that appear later are reported"],
   ["tls_learn_seconds", "Encrypted programs: learning time (s)", "Programs (TLS fingerprints) a device uses later without naming a website are reported"],
+  ["dns_ignore_domains", "Suspicious domain: ignore these networks", "Delivery networks whose server names look random by design"],
   ["watch_countries", "Countries to watch", "Codes such as KP,IR. Needs the country database."],
   ["alert_cooldown", "Repeat an alert after (s)", "The same alert is not raised again sooner"],
 ];
@@ -980,6 +981,7 @@ async function loadStory(force = false) {
         const sv = stageSev(inc, st);
         return `<div class="${sv ? "hit " + sv : ""}">${esc(st)}<small>${sv ? "seen" : "not seen"}</small></div>`; }).join("")}</div>
       <p class="narrative">${esc(inc.story)}</p>
+      ${(inc.cautions || []).map((c) => `<p class="notice" style="margin:0">${esc(c)}</p>`).join("")}
       <ol class="tl">${inc.steps.map((x) => `<li><span class="t">${esc(x.time)}</span><span class="pin ${x.severity}"></span>
         <div><div class="stage">${esc(x.stage)}</div><div><b>${esc(x.text)}</b>${x.count > 1 ? ` <span class="muted">×${x.count}</span>` : ""}</div>
         <div class="detail">${esc(x.detail)}</div></div></li>`).join("")}</ol>
