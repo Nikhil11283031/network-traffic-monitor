@@ -39,7 +39,8 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 - MCP server, so Claude Desktop and other AI apps can query the monitor
 - Accuracy benchmark against public datasets (CIC-IDS2017, UNSW-NB15) with detection rate, time to detect,
   precision and false alarms per hour
-- 84 automated tests, GitHub Actions CI and a Docker image
+- Tested on a real home Wi-Fi network: the false alarms found there were fixed (see below)
+- 92 automated tests, GitHub Actions CI and a Docker image
 
 ![Dashboard](docs/dashboard.png)
 
@@ -518,6 +519,24 @@ python3 -m netmon benchmark lab/lab.pcap --truth lab/lab-truth.json --ml-learn 5
 
 Nothing is sent to other devices or the internet, and `lab/` is ignored by git.
 
+
+### Real-world test: a home Wi-Fi network
+
+Demo files and lab recordings are tidy; real networks are not. The monitor was run live on a home Wi-Fi network
+(a MacBook on `en0`, a router, phones and other devices) during ordinary use. The first runs raised alarms
+that were wrong, each was traced to its cause, fixed, and turned into a test using the same traffic pattern:
+
+| False alarm on real traffic | Cause | Fix |
+| --- | --- | --- |
+| "Port scan" from the router | Its DNS replies go to a new random port on the laptop each time, and UDP replies were counted as connection attempts | Replies from a service's well-known port are not connection attempts |
+| "High traffic" from outside servers | Video and update downloads were treated like uploads | Only data sent *by your own devices* counts |
+| "Beaconing" to 224.0.0.251 | Macs announce themselves on multicast (mDNS) every few seconds, and multicast was treated as "outside" | Multicast, broadcast, link-local and loopback count as the local network |
+| "Suspicious DNS" under akadns.net / cloudflare.net | Content-delivery networks use random-looking server names on purpose | A list of delivery networks is ignored (editable in Settings) |
+| The AI analyst invented an attack when nothing was detected | A small local model (qwen2.5:7b) filled an empty story with a textbook attack | No AI story without alerts, and any answer naming an address that never appeared in the traffic is discarded |
+
+After the fixes the same network stays **Calm**, with only genuine "New device" alerts when a phone joins.
+Every fix keeps the demo at 8 of 8 attacks and the self lab at 4 of 4.
+
 ## Tests and CI
 
 ```bash
@@ -527,7 +546,7 @@ python3 -m pytest
 GitHub Actions (`.github/workflows/tests.yml`) runs the tests on Python 3.10, 3.11 and 3.12 on every push, runs
 the demo, and builds and runs the Docker image. The badge at the top shows the result.
 
-84 tests cover the JA4 fingerprint (against the specification's example), TLS reassembly, DNS/CNAME and DHCP
+92 tests cover the JA4 fingerprint (against the specification's example), TLS reassembly, DNS/CNAME and DHCP
 parsing, the Privacy X-ray, the self-test (including that drills never reach the real alerts), the attack story
 (including an attack that spreads), MITRE tagging, every threat-intelligence feed format and the feed download, the ML detector
 (learning, flagging only unusual behaviour, the demo capture, running without scikit-learn), and each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary

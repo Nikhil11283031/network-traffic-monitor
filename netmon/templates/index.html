@@ -634,7 +634,8 @@ function drawThreat(s) {
   const top = Object.values(groups).sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity]
     || PRIORITY.indexOf(a.kind) - PRIORITY.indexOf(b.kind));
   $("why").textContent = level === "calm"
-    ? (s.alerts.length ? "Every alert has been handled." : "Nothing suspicious so far. Alerts appear here the moment something happens.")
+    ? (n.low ? `Nothing serious. ${n.low} low alert${n.low > 1 ? "s" : ""} to look at, such as a new device joining.`
+       : s.alerts.length ? "Every alert has been handled." : "Nothing suspicious so far. Alerts appear here the moment something happens.")
     : `${n.high ? n.high + " serious alert" + (n.high > 1 ? "s" : "") : n.medium + " alert" + (n.medium > 1 ? "s" : "")} need${(n.high || n.medium) === 1 ? "s" : ""} attention. Start with the ${top[0].kind.toLowerCase()} from ${top[0].source}.`;
   const total = Math.max(1, n.high + n.medium + n.low);
   $("sevbar").innerHTML = ["high", "medium", "low"].map((k) => `<span class="sev-${k}" style="width:${(n[k] / total) * 100}%"></span>`).join("");
