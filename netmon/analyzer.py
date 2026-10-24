@@ -255,6 +255,7 @@ class Analyzer:
         self._udp_flows: OrderedDict = OrderedDict()  # (src, sport, dst, dport) -> last packet time
         self._dns_random = defaultdict(lambda: _Window(self.config.dns_tunnel_window))
         self.known_macs: set = set()  # hardware addresses already seen (a device's IPv4 and IPv6 share one)
+        self.remembered: dict[str, dict] = {}  # MAC -> device from earlier runs (store.py), incl. your own name
         self.local_names: dict[str, str] = {}  # local address -> name the device announces (mDNS, "*.local")
         self.tls_clients: dict[str, Counter] = defaultdict(Counter)  # device -> {JA4 fingerprint: connections}
         self.tls_first: dict[str, float] = {}  # device -> when its first TLS connection was seen
@@ -463,9 +464,47 @@ class Analyzer:
                     if ip in self.devices and not self.devices[ip].get("hostname"):
                         self.devices[ip]["hostname"] = short
 
+    def remember(self, known: dict):
+        """Devices from earlier runs: they are listed at once, and do not raise "New device" when they return."""
+        with self.lock:
+            self.remembered = {mac.lower(): dict(d) for mac, d in known.items()}
+            self.known_macs.update(self.remembered)
+            for d in self.remembered.values():
+                if d.get("label"):
+                    self.privacy.hostnames[d["ip"]] = d["label"]
+
+    def set_label(self, mac: str, label: str):
+        with self.lock:
+            mac = mac.lower()
+            entry = self.remembered.setdefault(mac, {"mac": mac, "ip": "", "hostname": "", "first_seen": 0,
+                                                    "last_seen": 0})
+            entry["label"] = label.strip()[:60]
+            for d in self.devices.values():
+                if (d.get("mac") or "").lower() == mac:
+                    entry["ip"] = entry["ip"] or d["ip"]
+                    self.privacy.hostnames[d["ip"]] = entry["label"] or d.get("hostname") or d["ip"]
+
+    def device_records(self) -> list[dict]:
+        """Devices seen this run with a hardware address, one per MAC (IPv4 address preferred) - for store.py."""
+        with self.lock:
+            by_mac: dict[str, dict] = {}
+            for d in self.devices.values():
+                mac = (d.get("mac") or "").lower()
+                if not mac or mac in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"):
+                    continue
+                current = by_mac.get(mac)
+                if current is None or (":" in current["ip"] and ":" not in d["ip"]):
+                    by_mac[mac] = {"mac": mac, "ip": d["ip"], "hostname": d.get("hostname") or "",
+                                   "first_seen": d["first_seen"], "last_seen": d["last_seen"]}
+            return list(by_mac.values())
+
     def name_of(self, ip: str) -> str | None:
-        """A readable name for an address: the device's own name, or the website an outside server belongs to."""
+        """A readable name for an address: your name for it, the device's own name, or the website an outside
+        server belongs to."""
         device = self.devices.get(ip)
+        label = self.remembered.get((device or {}).get("mac", "") and device["mac"].lower(), {}).get("label")
+        if label:
+            return label
         if device and device.get("hostname"):
             return device["hostname"]
         return self.local_names.get(ip) or self.privacy.names.get(ip)
@@ -628,7 +667,14 @@ class Analyzer:
                 merged.setdefault(owner["ip"], []).append(d["ip"])
                 continue
             out.append(d)
-        return [{**d, "also": merged.get(d["ip"], [])} for d in out]
+        return [{**d, "also": merged.get(d["ip"], []),
+                 "label": self.remembered.get((d.get("mac") or "").lower(), {}).get("label", "")} for d in out]
+
+    def _quiet_devices(self) -> list[dict]:
+        """Devices from earlier runs that have not sent anything yet in this one."""
+        present = {(d.get("mac") or "").lower() for d in self.devices.values()}
+        return sorted(({**d, "also": [], "packets": 0} for mac, d in self.remembered.items()
+                       if mac not in present and d.get("ip")), key=lambda d: d["ip"])
 
     def _links(self, limit: int = 40) -> list[dict]:
         """Who talks to whom (both directions added together), largest first - for the network map."""
@@ -660,6 +706,7 @@ class Analyzer:
                               for port, n in self.dst_ports.most_common(8)],
                 "dns": [{"domain": d, "count": n} for d, n in self.dns_domains.most_common(8)],
                 "devices": self._merged_devices(),
+                "known_devices": self._quiet_devices(),
                 "links": self._links(),
                 "alert_counts": dict(Counter(a.severity for a in self.alerts)),
                 "intel": self.intel.summary() if self.intel is not None else None,

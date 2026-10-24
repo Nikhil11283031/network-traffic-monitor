@@ -40,7 +40,7 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 - Accuracy benchmark against public datasets (CIC-IDS2017, UNSW-NB15) with detection rate, time to detect,
   precision and false alarms per hour
 - Tested on a real home Wi-Fi network: the false alarms found there were fixed (see below)
-- 95 automated tests, GitHub Actions CI and a Docker image
+- 98 automated tests, GitHub Actions CI and a Docker image
 
 ![Dashboard](docs/dashboard.png)
 
@@ -70,6 +70,15 @@ from your own computer or analyse a saved `.pcap` capture file (for example one 
 Repeated alerts for the same thing are grouped (one alert per minute; beaconing once per 30 minutes), so the
 list stays readable. Every limit can be changed live on the dashboard's **Settings** tab (or in `Config` in
 `netmon/analyzer.py`).
+
+**Devices.** The monitor only listens, so a quiet device (a phone on standby) appears when it next sends
+something. When watching live, every device is **remembered between runs** by its hardware (MAC) address: known
+devices are listed straight away (marked "not heard from yet" until they speak), "New device" is raised only
+for a device that has *never* been on your network, and you can **give each device your own name** ("Mum's
+iPad"). Devices that announce themselves (Bonjour/mDNS, DHCP) are named automatically. **Find all devices** (or
+`sudo .venv/bin/python -m netmon discover`) asks every address on your home network who is there, the way Fing
+does, so all of them appear within seconds; it only ever scans a private home or office range, never the
+internet.
 
 The dashboard also shows packets per second, protocols, the hosts sending and receiving the most data, the
 ports being contacted (risky ones in red), DNS lookups by domain, and every device seen on the local network.
@@ -566,7 +575,7 @@ python3 -m pytest
 GitHub Actions (`.github/workflows/tests.yml`) runs the tests on Python 3.10, 3.11 and 3.12 on every push, runs
 the demo, and builds and runs the Docker image. The badge at the top shows the result.
 
-95 tests cover the JA4 fingerprint (against the specification's example), TLS reassembly, DNS/CNAME and DHCP
+98 tests cover the JA4 fingerprint (against the specification's example), TLS reassembly, DNS/CNAME and DHCP
 parsing, the Privacy X-ray, the self-test (including that drills never reach the real alerts), the attack story
 (including an attack that spreads), MITRE tagging, every threat-intelligence feed format and the feed download, the ML detector
 (learning, flagging only unusual behaviour, the demo capture, running without scikit-learn), and each detection rule, false-positive checks (normal browsing, slow connections, replies, ordinary

@@ -57,7 +57,7 @@
   .side-actions .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
   main { padding: 26px clamp(16px, 3vw, 36px) 48px; display: grid; gap: 28px; align-content: start; max-width: 1500px; min-width: 0; }
-  .tab[hidden] { display: none; }
+  .tab[hidden], [hidden] { display: none !important; }
   .tab { display: grid; gap: 28px; min-width: 0; }
   .tab > *, .split > * { min-width: 0; }
 
@@ -399,8 +399,9 @@
   </section>
 
   <section class="table-wrap">
-    <div class="head"><h2>Devices on your network</h2></div>
-    <table><thead><tr><th>Address</th><th>Name</th><th>Hardware (MAC)</th><th>First seen</th><th>Last seen</th><th class="num">Packets</th></tr></thead>
+    <div class="head"><h2>Devices on your network</h2>
+      <div class="buttons"><span class="aside" id="devices-note"></span><button class="small" id="discover">Find all devices</button></div></div>
+    <table><thead><tr><th>Address</th><th>Name</th><th>Hardware (MAC)</th><th>First seen</th><th>Last seen</th><th class="num">Packets</th><th></th></tr></thead>
       <tbody id="devices"></tbody></table>
   </section>
 </div>
@@ -548,7 +549,7 @@ function drawMap(s) {
   const svg = $("map"), W = 820, H = 480, cx = W / 2, cy = H / 2 + 6;
   const sev = hostSeverity(s.alerts, s.devices);
   const country = Object.fromEntries(s.top_talkers.map((t) => [t.host, t.country]));
-  const names = Object.fromEntries(s.devices.filter((d) => d.hostname).map((d) => [d.ip, d.hostname]));
+  const names = Object.fromEntries(s.devices.filter((d) => d.label || d.hostname).map((d) => [d.ip, d.label || d.hostname]));
   const alias = Object.fromEntries(s.devices.flatMap((d) => (d.also || []).map((ip) => [ip, d.ip])));
   const main = (ip) => alias[ip] || ip;
   s = {...s, links: s.links.map((l) => ({...l, a: main(l.a), b: main(l.b)})).filter((l) => l.a !== l.b)};
@@ -723,7 +724,7 @@ async function refresh() {
   const s = snap;
   $("c-packets").textContent = s.packets.toLocaleString();
   $("c-bytes").textContent = size(s.bytes);
-  $("c-devices").textContent = s.devices.length;
+  $("c-devices").textContent = s.devices.length + ((s.known_devices || []).length ? ` (+${s.known_devices.length})` : "");
   $("c-alerts").textContent = s.alerts.length;
   $("source").textContent = s.status.source + (s.status.busy ? " (analysing)" : "");
   $("agent-label").textContent = s.status.agent;
@@ -743,12 +744,38 @@ async function refresh() {
   rows("ports", s.top_ports, (p) => `<tr><td class="${p.risky ? "risky" : ""}">${p.port}${PORT_NAMES[p.port] ? " " + PORT_NAMES[p.port] : ""}${p.risky ? " (risky)" : ""}</td>
     <td class="num">${p.count.toLocaleString()}</td></tr>`, "No connections yet.");
   rows("dns", s.dns, (d) => `<tr><td class="mono">${esc(d.domain)}</td><td class="num">${d.count}</td></tr>`, "No lookups yet.");
-  rows("devices", s.devices, (d) => `<tr><td class="mono">${esc(d.ip)}${(d.also || []).length ? `<div class="muted" style="font-size:12px">${(d.also || []).map(esc).join("<br>")}</div>` : ""}</td><td>${esc(d.hostname || "")}</td><td class="mono">${esc(d.mac || "")}</td>
-    <td>${time(d.first_seen)}</td><td>${time(d.last_seen)}</td><td class="num">${d.packets.toLocaleString()}</td></tr>`, "No devices seen yet.");
+  const quiet = s.known_devices || [];
+  $("devices-note").textContent = quiet.length ? `${quiet.length} known device${quiet.length > 1 ? "s" : ""} quiet so far` : "";
+  $("discover").hidden = !String(s.status.source).startsWith("live");
+  if (!(document.activeElement && document.activeElement.closest && document.activeElement.closest("#devices")))
+  rows("devices", [...s.devices, ...quiet.map((d) => ({...d, quiet: true}))], (d) => `<tr class="${d.quiet ? "acked" : ""}"><td class="mono">${esc(d.ip)}${(d.also || []).length ? `<div class="muted" style="font-size:12px">${(d.also || []).map(esc).join("<br>")}</div>` : ""}</td>
+    <td>${d.label ? `<b>${esc(d.label)}</b>${d.hostname ? `<div class="muted" style="font-size:12px">${esc(d.hostname)}</div>` : ""}` : esc(d.hostname || "")}${d.quiet ? `<div class="muted" style="font-size:12px">known, not heard from yet this session</div>` : ""}</td>
+    <td class="mono">${esc(d.mac || "")}</td>
+    <td>${d.first_seen ? (d.quiet ? dateTime(d.first_seen) : time(d.first_seen)) : ""}</td><td>${d.last_seen ? (d.quiet ? dateTime(d.last_seen) : time(d.last_seen)) : ""}</td>
+    <td class="num">${d.packets.toLocaleString()}</td>
+    <td>${d.mac && !/^ff:ff/i.test(d.mac) ? `<button class="ghost small" data-label="${esc(d.mac)}" data-current="${esc(d.label || "")}">${d.label ? "Rename" : "Name it"}</button>` : ""}</td></tr>`, "No devices seen yet.", 7);
   if (currentTab === "response") loadResponses(); else updateResponseCount();
   if (currentTab === "story") loadStory(); else updateStoryCount();
   if (currentTab === "privacy") loadPrivacy();
 }
+
+// ------------------------------------------------------------------ devices: names and discovery
+$("devices").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-label]");
+  if (!b) return;
+  let label;
+  try { label = window.prompt("Your name for this device (for example 'Mum's iPad'). Leave empty to remove it:", b.dataset.current); } catch { return; }
+  if (label === null) return;
+  try { await api(`/api/devices/${b.dataset.label}/label`, {label}); toast(label ? `Named "${label}".` : "Name removed."); b.blur(); refresh(); }
+  catch (err) { toast("Could not save the name: " + err.message); }
+});
+$("discover").onclick = async () => {
+  $("discover").disabled = true;
+  toast("Asking every address on your home network who is there…");
+  try { const r = await api("/api/discover", {}); toast(`Found ${r.found} device${r.found === 1 ? "" : "s"} on ${r.network}.`); refresh(); }
+  catch (err) { toast(err.message); }
+  $("discover").disabled = false;
+};
 
 // ------------------------------------------------------------------ upload
 $("upload-btn").onclick = () => $("upload").click();

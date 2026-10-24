@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE INDEX IF NOT EXISTS alerts_ts ON alerts(ts);
 CREATE INDEX IF NOT EXISTS alerts_kind ON alerts(kind);
+CREATE TABLE IF NOT EXISTS devices (
+    mac TEXT PRIMARY KEY, ip TEXT NOT NULL, hostname TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '',
+    first_seen REAL NOT NULL, last_seen REAL NOT NULL
+);
 """
 
 
@@ -106,6 +110,32 @@ class AlertStore:
                 "SELECT COUNT(*) FROM alerts WHERE severity = 'high' AND acked = 0").fetchone()[0]
         return {"path": self.path, "alerts": total, "sessions": sessions, "by_kind": by_kind,
                 "open_high": open_high}
+
+    # ------------------------------------------------------------------ remembered devices
+
+    def known_devices(self) -> dict:
+        """Every device seen in earlier runs, by hardware (MAC) address."""
+        with self.lock:
+            rows = self.db.execute("SELECT * FROM devices").fetchall()
+        return {row["mac"]: dict(row) for row in rows}
+
+    def save_devices(self, devices: list[dict]):
+        """Insert or update devices; keeps the name you gave each one and when it was first seen."""
+        with self.lock:
+            for d in devices:
+                self.db.execute(
+                    "INSERT INTO devices (mac, ip, hostname, first_seen, last_seen) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(mac) DO UPDATE SET ip = excluded.ip, last_seen = MAX(last_seen, excluded.last_seen), "
+                    "hostname = CASE WHEN excluded.hostname != '' THEN excluded.hostname ELSE hostname END, "
+                    "first_seen = MIN(first_seen, excluded.first_seen)",
+                    (d["mac"].lower(), d["ip"], d.get("hostname") or "", d["first_seen"], d["last_seen"]))
+            self.db.commit()
+
+    def set_label(self, mac: str, label: str) -> bool:
+        with self.lock:
+            cur = self.db.execute("UPDATE devices SET label = ? WHERE mac = ?", (label.strip()[:60], mac.lower()))
+            self.db.commit()
+            return cur.rowcount > 0
 
     def close(self):
         with self.lock:

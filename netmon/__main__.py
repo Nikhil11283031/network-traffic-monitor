@@ -86,6 +86,8 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--no-ml", action="store_true")
     bench.add_argument("--ml-learn", type=float, default=600,
                        help="seconds of traffic the ML model learns from (default 600)")
+    disc = sub.add_parser("discover", help="list every device on your home network now (ARP; needs sudo)")
+    disc.add_argument("--iface", help="interface, e.g. en0 (default: the main one)")
     st = sub.add_parser("selftest", help="run the detection drills with the default (or given) settings")
     st.add_argument("--intel", default="intel")
     st.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
@@ -275,6 +277,19 @@ def main(argv=None):
         return 0
     if args.mode == "history":
         return run_history(args)
+    if args.mode == "discover":
+        from .discover import arp_sweep
+
+        try:
+            result = arp_sweep(args.iface)
+        except PermissionError:
+            print("Finding devices needs administrator rights: sudo .venv/bin/python -m netmon discover")
+            return 1
+        print(f"Devices answering on {result['network']}:")
+        for ip, mac in result["devices"]:
+            print(f"  {ip:<16} {mac}")
+        print(f"{len(result['devices'])} device(s). Phones on standby sometimes answer only on a second try.")
+        return 0
     if args.mode == "selftest":
         return run_selftest(args)
     if args.mode == "privacy":
@@ -345,6 +360,9 @@ def main(argv=None):
     source = f"live: {args.iface or 'default interface'}" if args.mode == "live" else f"file: {args.path}"
     monitor = Monitor(source, config=config, intel=intel, geo=geo, ml_learn=ml_learn, store=store, notifier=notifier,
                       privacy_extra=privacy_extra, live=args.mode == "live")
+    monitor.iface = getattr(args, "iface", None)
+    if monitor.analyzer.remembered:
+        print(f"Known devices: {len(monitor.analyzer.remembered)} remembered from earlier runs")
     monitor.analyzer.listeners.append(print_alert)
     analyzer = monitor.analyzer
     if args.mode == "live":
@@ -397,6 +415,7 @@ def main(argv=None):
         return 1
     finally:
         time.sleep(0.1)
+        monitor.save_devices(every=0)
         analyzer = monitor.analyzer  # may be a newer session if a file was uploaded
         snapshot = analyzer.snapshot()
         print_summary(snapshot)

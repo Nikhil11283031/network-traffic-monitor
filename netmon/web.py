@@ -14,6 +14,7 @@ import csv
 import io
 import json
 import os
+import re
 import tempfile
 import time
 from dataclasses import asdict
@@ -59,9 +60,22 @@ def create_app(analyzer: Analyzer | None = None, source: str = "", agent: Securi
 
     @app.get("/api/snapshot")
     def snapshot():
+        monitor.save_devices()
         snap = monitor.analyzer.snapshot()
         snap["status"] = monitor.status()
         return jsonify(snap)
+
+    @app.post("/api/devices/<mac>/label")
+    def label_device(mac):
+        if not re.fullmatch(r"[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}", mac):
+            return jsonify({"error": "Not a hardware (MAC) address."}), 400
+        monitor.set_label(mac, str(body().get("label", "")))
+        return jsonify({"ok": True})
+
+    @app.post("/api/discover")
+    def discover():
+        result = monitor.discover()
+        return (jsonify(result), 400) if "error" in result else jsonify(result)
 
     @app.get("/api/privacy")
     def privacy():

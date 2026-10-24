@@ -228,3 +228,68 @@ def test_mcp_server_reports_when_dashboard_is_down():
 
     out = MCPServer("http://127.0.0.1:9").call_tool("get_overview", {})
     assert "cannot reach the network monitor" in out["error"]
+
+
+# ---------------------------------------------------------------- remembered devices and discovery
+
+def test_devices_are_remembered_between_runs(tmp_path):
+    store = AlertStore(tmp_path / "h.db")
+    first = Monitor("live: en0", store=store, ml_learn=None, live=True)
+    for i, (ip, mac) in enumerate([("192.168.1.103", "aa:00:00:00:01:03"), ("192.168.1.106", "9e:ad:eb:c7:9d:c3")]):
+        first.analyzer.process(PacketInfo(T0 + i, ip, "192.168.1.1", "UDP", 90, 5000, 53, src_mac=mac))
+    first.save_devices(every=0)
+    first.set_label("9E:AD:EB:C7:9D:C3", "Mum's iPad")
+
+    second = Monitor("live: en0", store=store, ml_learn=None, live=True)  # the next run
+    a = second.analyzer
+    a.process(PacketInfo(T0 + 100, "192.168.1.103", "192.168.1.1", "UDP", 90, 5000, 53, src_mac="aa:00:00:00:01:03"))
+    snap = a.snapshot()
+    assert [d["ip"] for d in snap["devices"]] == ["192.168.1.103"]
+    quiet = snap["known_devices"]
+    assert [(d["ip"], d["label"]) for d in quiet] == [("192.168.1.106", "Mum's iPad")]
+    # The iPad wakes up after the warm-up: known, so no "New device" alert, and it carries its name.
+    a.process(PacketInfo(T0 + 200, "192.168.1.106", "192.168.1.1", "UDP", 90, 5001, 53, src_mac="9e:ad:eb:c7:9d:c3"))
+    assert not [x for x in a.alerts if x.kind == "New device"]
+    assert a.name_of("192.168.1.106") == "Mum's iPad" and not a.snapshot()["known_devices"]
+    a.process(PacketInfo(T0 + 210, "192.168.1.120", "192.168.1.1", "UDP", 90, 5002, 53, src_mac="de:ad:be:ef:01:20"))
+    assert [x.source for x in a.alerts if x.kind == "New device"] == ["192.168.1.120"]  # truly new
+
+
+def test_label_api_and_files_do_not_use_remembered_devices(tmp_path):
+    store = AlertStore(tmp_path / "h.db")
+    live = Monitor("live: en0", store=store, ml_learn=None, live=True)
+    live.analyzer.process(PacketInfo(T0, "192.168.1.106", "192.168.1.1", "UDP", 90, 5000, 53, src_mac="9e:ad:eb:c7:9d:c3"))
+    client = create_app(monitor=live).test_client()
+    assert client.post("/api/devices/9e:ad:eb:c7:9d:c3/label", json={"label": "Lounge TV"}, headers=H).status_code == 200
+    assert client.post("/api/devices/not-a-mac/label", json={"label": "x"}, headers=H).status_code == 400
+    assert client.post("/api/devices/9e:ad:eb:c7:9d:c3/label", json={"label": "x"}).status_code == 403
+    assert store.known_devices()["9e:ad:eb:c7:9d:c3"]["label"] == "Lounge TV"
+    assert client.get("/api/snapshot").get_json()["devices"][0]["label"] == "Lounge TV"
+    offline = Monitor("file: x.pcap", store=store, ml_learn=None)  # a capture file is someone else's network
+    assert offline.analyzer.remembered == {} and "error" in offline.discover()
+
+
+def test_discovery_only_scans_a_private_network(monkeypatch):
+    import ipaddress
+    from types import SimpleNamespace
+
+    import netmon.discover as disc
+
+    assert str(disc.safe_range(ipaddress.ip_network("192.168.1.0/24"))) == "192.168.1.0/24"
+    assert str(disc.safe_range(ipaddress.ip_network("10.0.0.0/8"), "10.1.2.3")) == "10.1.2.0/24"
+    with pytest.raises(ValueError):
+        disc.safe_range(ipaddress.ip_network("8.8.8.0/24"))
+    monkeypatch.setattr(disc, "local_network", lambda iface=None: ipaddress.ip_network("192.168.1.0/24"))
+    import scapy.all as sa
+
+    monkeypatch.setattr(sa, "get_if_addr", lambda iface: "192.168.1.103")
+    sent = []
+    replies = [(None, SimpleNamespace(psrc="192.168.1.106", hwsrc="9E:AD:EB:C7:9D:C3")),
+               (None, SimpleNamespace(psrc="192.168.1.1", hwsrc="aa:bb:cc:00:00:01"))]
+    result = disc.arp_sweep("en0", sender=lambda pkt: sent.append(pkt) or replies)
+    assert result == {"network": "192.168.1.0/24",
+                      "devices": [("192.168.1.1", "aa:bb:cc:00:00:01"), ("192.168.1.106", "9e:ad:eb:c7:9d:c3")]}
+    assert sent[0].pdst == "192.168.1.0/24" and sent[0].dst == "ff:ff:ff:ff:ff:ff"
+    a = Analyzer()
+    disc.feed(a, result["devices"])
+    assert {d["ip"] for d in a.snapshot()["devices"]} == {"192.168.1.1", "192.168.1.106"}

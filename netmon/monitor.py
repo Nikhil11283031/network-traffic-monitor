@@ -45,6 +45,8 @@ class Monitor:
         session = self.store.start_session(source) if self.store else None
         if self.store:
             analyzer.listeners.append(lambda alert, s=session: self.store.add(alert, s))
+            if self.live:  # files are someone else's network: only live monitoring uses remembered devices
+                analyzer.remember(self.store.known_devices())
         if self.notifier:
             analyzer.listeners.append(self.notifier)
         responder = Responder()
@@ -124,6 +126,43 @@ class Monitor:
         analyzer = self.analyzer
         mac_to_ip = {mac: ip for ip, mac in analyzer.ip_mac.items()}
         return build(analyzer.snapshot()["alerts"], mac_to_ip, analyzer.gateway())
+
+    # ------------------------------------------------------------------ devices
+
+    def save_devices(self, every: float = 30) -> bool:
+        """Remember the devices seen (at most every `every` seconds; the dashboard calls this as it refreshes)."""
+        if not self.store or not self.live:
+            return False
+        now = time.time()
+        if now - getattr(self, "_devices_saved", 0) < every:
+            return False
+        self._devices_saved = now
+        self.store.save_devices(self.analyzer.device_records())
+        return True
+
+    def set_label(self, mac: str, label: str) -> bool:
+        if self.store:
+            self.save_devices(every=0)
+            self.store.set_label(mac, label)
+        self.analyzer.set_label(mac, label)
+        return True
+
+    def discover(self) -> dict:
+        """The "Find all devices" button: ask every address on the home network who is there (live only)."""
+        if not self.live:
+            return {"error": "Finding devices only works while watching your network live."}
+        from .discover import arp_sweep, feed
+
+        try:
+            result = arp_sweep(getattr(self, "iface", None))
+        except PermissionError:
+            return {"error": "Needs administrator rights - start the monitor with sudo."}
+        except (OSError, ValueError) as exc:
+            return {"error": str(exc)}
+        feed(self.analyzer, result["devices"])
+        self.save_devices(every=0)
+        return {"network": result["network"], "found": len(result["devices"]),
+                "devices": [{"ip": ip, "mac": mac} for ip, mac in result["devices"]]}
 
     def acknowledge(self, alert_id: str, note: str = "", acked: bool = True) -> bool:
         found = self.analyzer.acknowledge(alert_id, note, acked) is not None
