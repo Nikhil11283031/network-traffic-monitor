@@ -124,7 +124,8 @@ def test_base_domain():
 def test_is_local():
     from netmon.analyzer import is_local
     assert is_local("192.168.1.10") and is_local("10.1.2.3") and is_local("172.20.0.5")
-    assert not is_local("203.0.113.50") and not is_local("8.8.8.8") and not is_local("127.0.0.1")
+    assert not is_local("203.0.113.50") and not is_local("8.8.8.8")
+    assert is_local("127.0.0.1")  # loopback is never a server on the internet
 
 
 def test_entropy():
@@ -262,3 +263,20 @@ def test_free_port_skips_a_busy_port():
         assert free_port("127.0.0.1", port) == port + 1 or free_port("127.0.0.1", port) > port
     finally:
         busy.close()
+
+
+def test_downloads_and_multicast_are_not_alarms():
+    """Found in a live test: a video download looked like 'High traffic' and mDNS looked like beaconing."""
+    from netmon.analyzer import Analyzer, PacketInfo, is_local
+
+    assert is_local("224.0.0.251") and is_local("255.255.255.255") and is_local("ff02::fb") and is_local("169.254.1.2")
+    assert not is_local("223.255.0.1") and not is_local("240.0.0.1") and not is_local("8.8.8.8")
+    a = Analyzer()
+    for i in range(6000):  # 9 MB downloaded from a video server in 6 seconds
+        a.process(PacketInfo(1_792_000_000 + i * 0.001, "116.255.21.202", "192.168.1.103", "TCP", 1500, 443, 50000, "A"))
+    for i in range(14):  # the Mac announcing itself on mDNS every 20 seconds
+        a.process(PacketInfo(1_792_000_000 + i * 20, "192.168.1.103", "224.0.0.251", "UDP", 200, 51000 + i, 5353))
+    assert not [x.kind for x in a.alerts]
+    device = a.privacy.report()["devices"][0]
+    assert device["sent"] == 0  # the mDNS packets to 224.0.0.251 are not counted as data sent to the internet
+    assert [p["received"] for p in device["parties"]] == [9_000_000]  # only the download

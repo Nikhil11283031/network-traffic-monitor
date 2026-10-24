@@ -230,10 +230,11 @@ class PrivacyTracker:
                                  "meaning": meaning, "tip": tip})
                 rows.sort(key=lambda r: (r["category"] == "service", -r["sent"]))
                 trackers = [r for r in rows if r["category"] != "service"]
-                total = sum(r["sent"] for r in rows) or 1
+                sent_total = sum(r["sent"] for r in rows)
+                total = sent_total or 1  # avoid dividing by zero for a device that only downloaded
                 out.append({"device": device, "hostname": self.hostnames.get(device), "kind": self._guess(rows),
                             "companies": len({r["company"] for r in rows if r["company"] != "Unidentified"}),
-                            "trackers": len(trackers), "sent": total if rows else 0,
+                            "trackers": len(trackers), "sent": sent_total,
                             "tracker_share": round(sum(r["sent"] for r in trackers) / total, 3),
                             "countries": sorted({c for r in rows for c in r["countries"]}),
                             "parties": rows[:25]})

@@ -149,12 +149,13 @@ def base_domain(name: str) -> str:
     return ".".join(parts[-keep:])
 
 
-# Address ranges used inside home and office networks (RFC 1918 for IPv4, unique local for IPv6).
-# Python's is_private is not used because it also counts documentation and other reserved ranges.
-LOCAL_NETWORKS = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")]
-
-
-_PRIVATE_172 = tuple(f"172.{n}." for n in range(16, 32))
+# Addresses that are never a server on the internet: private ranges (RFC 1918, IPv6 unique local), plus
+# loopback, link-local, multicast (e.g. 224.0.0.251, which Macs use to find printers and AirPlay devices) and
+# broadcast. Python's is_private is not used because it also counts documentation and other reserved ranges.
+LOCAL_NETWORKS = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7",
+                                                    "fe80::/10", "ff00::/8", "::1/128")]
+_LOCAL_V4_PREFIXES = ("10.", "192.168.", "127.", "169.254.") + tuple(f"172.{n}." for n in range(16, 32)) \
+    + tuple(f"{n}." for n in range(224, 240))
 
 
 @functools.lru_cache(maxsize=65536)
@@ -167,10 +168,11 @@ def _is_local_v6(ip: str) -> bool:
 
 
 def is_local(ip: str) -> bool:
+    """True for addresses on your own network (or multicast/broadcast), False for servers on the internet."""
     if ":" in ip:  # IPv6 (or a MAC address, which is not an IP and gives False)
         return _is_local_v6(ip)
     # IPv4 addresses come from packet parsers as dotted decimal, so a prefix check is exact and much faster.
-    return ip.startswith(("10.", "192.168.")) or ip.startswith(_PRIVATE_172)
+    return ip.startswith(_LOCAL_V4_PREFIXES) or ip == "255.255.255.255"
 
 
 class _Window:
@@ -323,10 +325,12 @@ class Analyzer:
             self._alert(new_alerts, p.ts, "medium", "Risky port", p.src, f"{p.dst}:{p.dport}",
                         f"{p.src} connected to {p.dst} on port {p.dport} - {RISKY_PORTS[p.dport]}.", port=p.dport)
 
-        # Heavy talker: one host sending a lot of data quickly (large upload, possible data theft).
-        window = self._volume[p.src]
-        window.add(p.ts, amount=p.length)
-        if window.total >= self.config.heavy_bytes:
+        # Heavy talker: one of your devices sending a lot of data quickly (large upload, possible data theft).
+        # Outside servers sending a lot TO you is just a download (video, updates), so they are not counted.
+        window = self._volume[p.src] if is_local(p.src) else None
+        if window is not None:
+            window.add(p.ts, amount=p.length)
+        if window is not None and window.total >= self.config.heavy_bytes:
             top_dst, top_bytes = self.host_peers[p.src].most_common(1)[0]
             where = "outside your network" if not is_local(top_dst) else "on your network"
             self._alert(new_alerts, p.ts, "medium", "High traffic", p.src, "any",
