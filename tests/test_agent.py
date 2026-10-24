@@ -241,3 +241,23 @@ def test_safety_check_works_section_by_section(analyzer):
     # The ML anomaly for .12 is covered because .12 is discussed in a section.
     assert kinds == ["Risky port", "Threat intel"]
     assert "overall risk is High" in out
+
+
+def test_invented_attack_is_discarded(analyzer):
+    """Found in a live test: with nothing detected, a small local model invented a whole attack."""
+    client = FakeClient([([text("## Summary\n192.168.1.10 contacted the C2 server 104.26.10.20 and attacked "
+                                "the router 192.168.1.254.")], "end_turn")])
+    result = SecurityAnalystAgent(analyzer, client=client).ask("Tell the attack story")
+    assert result.mode == "offline" and "104.26.10.20" in result.note and "192.168.1.254" in result.note
+    assert "104.26.10.20" not in result.report
+
+
+def test_no_alerts_means_no_ai_story():
+    quiet = Analyzer()
+    quiet.process(PacketInfo(T0, "192.168.1.10", "142.250.66.78", "TCP", 60, 50000, 443, "S"))
+    client = FakeClient([])  # would fail if called
+    result = SecurityAnalystAgent(quiet, client=client).ask("Tell the attack story: how do the incidents connect?")
+    assert "No attacks were detected" in result.report and not client.requests
+    real = SecurityAnalystAgent(quiet, client=FakeClient([([text("Use 1.1.1.1 for DNS; 142.250.66.78 is Google.")],
+                                                           "end_turn")])).ask("Which DNS should I use?")
+    assert real.mode == "ai"  # known and generic addresses are fine

@@ -528,9 +528,25 @@ class SecurityAnalystAgent:
             return OfflineAnalyst(self.analyzer).answer(
                 request, note="AI mode is off, so the built-in rule-based analyst answered. For free AI answers, "
                               "install Ollama (see README); or set ANTHROPIC_API_KEY to use Claude.")
+        alerts = self.analyzer.snapshot()["alerts"]
+        q = request.lower()
+        if not alerts and any(w in q for w in ("investigate", "story", "attack", "threat", "what happened")):
+            # Nothing was detected: asking a language model to "tell the attack story" of nothing invites it to
+            # invent one, so the factual answer is given directly.
+            result = OfflineAnalyst(self.analyzer).answer(request)
+            result.note = "Nothing has been detected, so there was nothing for the AI to investigate."
+            return result
         steps: list = []
         try:
             result = self._run_claude(request, steps) if self.provider == "claude" else self._run_ollama(request, steps)
+            invented = invented_addresses(result.report, self.analyzer, request)
+            if invented:
+                fallback = OfflineAnalyst(self.analyzer).answer(request)
+                fallback.steps = result.steps
+                fallback.note = (f"The AI's answer mentioned address(es) that never appeared in your traffic "
+                                 f"({', '.join(invented[:4])}), so it was discarded and the built-in analyst answered "
+                                 "instead. Small local models sometimes invent details; a larger model does this less.")
+                return fallback
             if "investigate" in request.lower() and "incident report" in request.lower():
                 result.report, missing = add_missing_incidents(result.report, self.analyzer.snapshot()["alerts"])
                 if missing:
@@ -635,6 +651,27 @@ def _sections(report: str) -> list[str]:
 
 def _mentions_ip(text: str, ip: str) -> bool:
     return re.search(r"(?<![\d.])" + re.escape(ip.lower()) + r"(?![\d])", text) is not None
+
+
+IPV4_RE = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)")  # a full stop after it is fine
+# Addresses an analyst may legitimately mention without seeing them in the traffic (public DNS, placeholders).
+GENERIC_ADDRESSES = {"0.0.0.0", "127.0.0.1", "255.255.255.255", "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4",
+                     "9.9.9.9", "149.112.112.112"}
+
+
+def invented_addresses(report: str, analyzer, request: str = "") -> list[str]:
+    """IPv4 addresses in an AI answer that appear nowhere in the captured traffic, the alerts or the question.
+    A made-up address means the model is describing something that did not happen (a hallucination)."""
+    known = set(analyzer.sent) | set(analyzer.received) | set(analyzer.devices) | GENERIC_ADDRESSES
+    for a in analyzer.alerts:
+        known.update({a.source, a.target.split(":")[0]})
+        known.update(IPV4_RE.findall(a.message))
+    known.update(IPV4_RE.findall(request))
+    out = []
+    for ip in IPV4_RE.findall(report):
+        if ip not in known and ip not in out and all(int(x) <= 255 for x in ip.split(".")):
+            out.append(ip)
+    return out
 
 
 def add_missing_incidents(report: str, alerts: list) -> tuple[str, list]:

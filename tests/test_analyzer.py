@@ -280,3 +280,32 @@ def test_downloads_and_multicast_are_not_alarms():
     device = a.privacy.report()["devices"][0]
     assert device["sent"] == 0  # the mDNS packets to 224.0.0.251 are not counted as data sent to the internet
     assert [p["received"] for p in device["parties"]] == [9_000_000]  # only the download
+
+
+def test_ipv6_addresses_are_shown_under_their_device():
+    from netmon.analyzer import Analyzer, PacketInfo
+
+    a = Analyzer()
+    a.process(PacketInfo(1_792_000_000, "192.168.1.103", "142.250.66.78", "TCP", 60, 1, 443, "S", src_mac="aa:bb:cc:dd:ee:01"))
+    a.process(PacketInfo(1_792_000_001, "fe80::1c2:3ff:fe04:5", "ff02::fb", "UDP", 60, 5353, 5353, src_mac="AA:BB:CC:DD:EE:01"))
+    a.process(PacketInfo(1_792_000_002, "fe80::99", "ff02::fb", "UDP", 60, 5353, 5353, src_mac="aa:bb:cc:dd:ee:99"))
+    devices = {d["ip"]: d for d in a.snapshot()["devices"]}
+    assert devices["192.168.1.103"]["also"] == ["fe80::1c2:3ff:fe04:5"]
+    assert set(devices) == {"192.168.1.103", "fe80::99"}  # an IPv6-only device stays on its own
+
+
+def test_second_copy_is_detected(monkeypatch):
+    import netmon.__main__ as cli
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"status": {"source": "live: en0"}}'
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda url, timeout: Resp())
+    assert cli.running_monitor(5050) == "port 5050, watching live: en0"

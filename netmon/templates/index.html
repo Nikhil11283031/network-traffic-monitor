@@ -548,7 +548,11 @@ function drawMap(s) {
   const svg = $("map"), W = 820, H = 480, cx = W / 2, cy = H / 2 + 6;
   const sev = hostSeverity(s.alerts, s.devices);
   const country = Object.fromEntries(s.top_talkers.map((t) => [t.host, t.country]));
-  const locals = [...new Set([...s.devices.map((d) => d.ip), ...s.links.flatMap((l) => [l.a, l.b]).filter(isLocal)])];
+  const alias = Object.fromEntries(s.devices.flatMap((d) => (d.also || []).map((ip) => [ip, d.ip])));
+  const main = (ip) => alias[ip] || ip;
+  s = {...s, links: s.links.map((l) => ({...l, a: main(l.a), b: main(l.b)})).filter((l) => l.a !== l.b)};
+  const locals = [...new Set([...s.devices.map((d) => d.ip), ...s.links.flatMap((l) => [l.a, l.b]).filter(isLocal)])]
+    .filter((ip) => !/^f[fe]/i.test(ip) && !/^(22[4-9]|23\d)\./.test(ip) && ip !== "255.255.255.255");
   const gateway = locals.find((ip) => /\.1$/.test(ip)) || locals[0];
   const ring = locals.filter((ip) => ip !== gateway);
   const extBytes = {};
@@ -737,7 +741,7 @@ async function refresh() {
   rows("ports", s.top_ports, (p) => `<tr><td class="${p.risky ? "risky" : ""}">${p.port}${PORT_NAMES[p.port] ? " " + PORT_NAMES[p.port] : ""}${p.risky ? " (risky)" : ""}</td>
     <td class="num">${p.count.toLocaleString()}</td></tr>`, "No connections yet.");
   rows("dns", s.dns, (d) => `<tr><td class="mono">${esc(d.domain)}</td><td class="num">${d.count}</td></tr>`, "No lookups yet.");
-  rows("devices", s.devices, (d) => `<tr><td class="mono">${esc(d.ip)}</td><td>${esc(d.hostname || "")}</td><td class="mono">${esc(d.mac || "")}</td>
+  rows("devices", s.devices, (d) => `<tr><td class="mono">${esc(d.ip)}${(d.also || []).length ? `<div class="muted" style="font-size:12px">${(d.also || []).map(esc).join("<br>")}</div>` : ""}</td><td>${esc(d.hostname || "")}</td><td class="mono">${esc(d.mac || "")}</td>
     <td>${time(d.first_seen)}</td><td>${time(d.last_seen)}</td><td class="num">${d.packets.toLocaleString()}</td></tr>`, "No devices seen yet.");
   if (currentTab === "response") loadResponses(); else updateResponseCount();
   if (currentTab === "story") loadStory(); else updateStoryCount();
@@ -801,7 +805,8 @@ async function runAgent(url, body, outId = "agent-out") {
   }, 1500);
   try {
     const r = await api(url, body || {});
-    out.innerHTML = (r.steps.length ? `<div class="steps">Checked: ${stepList(r.steps)}</div>` : "")
+    out.innerHTML = (r.mode === "ai" ? `<div class="steps">Written by AI from the tools it called. Check important claims against the alerts.</div>` : "")
+      + (r.steps.length ? `<div class="steps">Checked: ${stepList(r.steps)}</div>` : "")
       + (r.note ? `<div class="warning">${esc(r.note)}</div>` : "") + `<div class="report">${markdown(r.report)}</div>`;
   } catch (e) {
     out.innerHTML = `<p class="warning">The analyst could not answer: ${esc(e.message)}</p>`;

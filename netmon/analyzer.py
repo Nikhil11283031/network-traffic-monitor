@@ -542,6 +542,22 @@ class Analyzer:
                 "alerts": [asdict(a) for a in self.alerts if ip in (a.source, a.target.split(":")[0])],
             }
 
+    def _merged_devices(self) -> list[dict]:
+        """One entry per device: IPv6 addresses that share a MAC address with an IPv4 device are listed under it
+        (a laptop usually has an IPv4 address and one or more IPv6 addresses)."""
+        by_mac = {}
+        for d in self.devices.values():
+            if d.get("mac") and ":" not in d["ip"]:
+                by_mac.setdefault(d["mac"].lower(), d)
+        out, merged = [], {}
+        for d in sorted(self.devices.values(), key=lambda d: d["first_seen"]):
+            owner = by_mac.get((d.get("mac") or "").lower()) if ":" in d["ip"] else None
+            if owner is not None and owner is not d:
+                merged.setdefault(owner["ip"], []).append(d["ip"])
+                continue
+            out.append(d)
+        return [{**d, "also": merged.get(d["ip"], [])} for d in out]
+
     def _links(self, limit: int = 40) -> list[dict]:
         """Who talks to whom (both directions added together), largest first - for the network map."""
         pairs: Counter = Counter()
@@ -571,7 +587,7 @@ class Analyzer:
                 "top_ports": [{"port": port, "count": n, "risky": port in RISKY_PORTS}
                               for port, n in self.dst_ports.most_common(8)],
                 "dns": [{"domain": d, "count": n} for d, n in self.dns_domains.most_common(8)],
-                "devices": sorted(self.devices.values(), key=lambda d: d["first_seen"]),
+                "devices": self._merged_devices(),
                 "links": self._links(),
                 "alert_counts": dict(Counter(a.severity for a in self.alerts)),
                 "intel": self.intel.summary() if self.intel is not None else None,

@@ -104,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="dashboard address (default 127.0.0.1 = this computer only; Docker uses 0.0.0.0)")
         p.add_argument("--port", type=int, default=5050, help="dashboard port (default 5050)")
         p.add_argument("--no-web", action="store_true", help="console output only, no dashboard")
+        p.add_argument("--allow-second", action="store_true", help="start even if another copy is already running")
         p.add_argument("--intel", default="intel", help="folder of threat-intelligence lists (default intel/)")
         p.add_argument("--no-intel", action="store_true", help="do not check threat-intelligence lists")
         p.add_argument("--geoip", default="geoip", help="folder with the country database (default geoip/)")
@@ -162,6 +163,20 @@ def run_benchmark(args) -> int:
     print(markdown(result, title))
     print(f"Saved {out / (stem + '.md')} and {out / (stem + '.json')}")
     return 0
+
+
+def running_monitor(port: int, tries: int = 10) -> str | None:
+    """If a copy of this monitor already answers on one of the ports, what it is watching."""
+    import urllib.request
+
+    for candidate in range(port, port + tries):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{candidate}/api/snapshot", timeout=0.5) as resp:
+                data = json.loads(resp.read())
+            return f"port {candidate}, watching {data['status']['source']}"
+        except Exception:
+            continue
+    return None
 
 
 def free_port(host: str, port: int, tries: int = 10) -> int | None:
@@ -357,6 +372,13 @@ def main(argv=None):
             from .web import create_app
 
             logging.getLogger("werkzeug").setLevel(logging.WARNING)  # hide the per-request log lines
+            other = running_monitor(args.port)
+            if other and not args.allow_second:
+                print(f"Another copy of the monitor is already running at http://127.0.0.1:{args.port} "
+                      f"({other}). Two copies would save every alert twice.\n"
+                      "Stop it with Ctrl+C in its window, or run:  sudo lsof -ti tcp:5050-5059 -sTCP:LISTEN | xargs "
+                      "sudo kill\n(Or start this one anyway with --allow-second.)")
+                return 1
             port = free_port(args.host, args.port)
             if port is None:
                 print(f"Ports {args.port}-{args.port + 9} are all in use. Stop the other program or use --port.")
