@@ -164,6 +164,20 @@ def run_benchmark(args) -> int:
     return 0
 
 
+def free_port(host: str, port: int, tries: int = 10) -> int | None:
+    """The first port from `port` upwards that nothing is listening on."""
+    import socket
+
+    for candidate in range(port, port + tries):
+        with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, candidate))
+                return candidate
+            except OSError:
+                continue
+    return None
+
+
 def run_selftest(args) -> int:
     from .analyzer import Config
     from .selftest import run_drills
@@ -343,6 +357,13 @@ def main(argv=None):
             from .web import create_app
 
             logging.getLogger("werkzeug").setLevel(logging.WARNING)  # hide the per-request log lines
+            port = free_port(args.host, args.port)
+            if port is None:
+                print(f"Ports {args.port}-{args.port + 9} are all in use. Stop the other program or use --port.")
+                return 1
+            if port != args.port:
+                print(f"Port {args.port} is in use (probably an earlier copy of the monitor), so using {port}.")
+            args.port = port
             shown = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
             print(f"Dashboard: http://{shown}:{args.port}   (Ctrl+C to stop)")
             create_app(monitor=monitor).run(host=args.host, port=args.port, debug=False, use_reloader=False,

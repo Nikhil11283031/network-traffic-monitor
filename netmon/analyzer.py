@@ -30,6 +30,23 @@ RISKY_PORTS = {
     6667: "IRC (often used by botnets)",
 }
 
+# UDP services that answer from their well-known port (DNS, DHCP, NTP, QUIC/HTTPS, mDNS, SSDP, STUN...).
+UDP_SERVICE_PORTS = {53, 67, 68, 69, 123, 137, 138, 161, 443, 500, 514, 853, 1900, 3478, 4500, 5353, 5355, 19302}
+
+
+def starts_conversation(p) -> bool:
+    """Whether a packet opens a new conversation (a connection attempt). TCP: a SYN without ACK. UDP has no
+    handshake, so a packet counts unless it is a reply from a service: replies come FROM the service port and go
+    TO the client's random port, and counting those made a router answering DNS lookups look like a port scan."""
+    if p.proto == "TCP":
+        return "S" in p.flags and "A" not in p.flags
+    if p.proto in ("UDP", "DNS"):
+        if p.sport in UDP_SERVICE_PORTS:
+            return False
+        return not (p.sport is not None and p.dport is not None and p.sport < 1024 <= p.dport)
+    return False
+
+
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 
 # Services people log in to - many attempts on one of these in a short time looks like password guessing.
@@ -254,14 +271,14 @@ class Analyzer:
             self._check_tls(p, new_alerts)
 
         is_syn = p.proto == "TCP" and "S" in p.flags and "A" not in p.flags
-        starts_conversation = is_syn or p.proto in ("UDP", "DNS")
+        starts = starts_conversation(p)
 
-        if p.dport is not None and starts_conversation:
+        if p.dport is not None and starts:
             self.dst_ports[p.dport] += 1
             self.host_ports[p.src][p.dport] += 1
 
         # Port scan: one host trying many different ports on another host in a short time.
-        if p.dport is not None and starts_conversation:
+        if p.dport is not None and starts:
             window = self._scan[(p.src, p.dst)]
             window.add(p.ts, key=p.dport)
             ports = window.distinct_keys()
@@ -290,7 +307,7 @@ class Analyzer:
                             "possible password guessing.")
 
         # Beaconing: malware "calling home" to its server on a fixed timer.
-        if starts_conversation and p.proto != "DNS" and is_local(p.src) and not is_local(p.dst):
+        if starts and p.proto != "DNS" and is_local(p.src) and not is_local(p.dst):
             self._check_beacon(p, new_alerts)
 
         # Countries the owner asked to be warned about.
@@ -302,7 +319,7 @@ class Analyzer:
                             f"{p.src} connected to {p.dst} in {country}, a country on your watch list.")
 
         # Risky or unusual services.
-        if p.dport in RISKY_PORTS and starts_conversation:
+        if p.dport in RISKY_PORTS and starts:
             self._alert(new_alerts, p.ts, "medium", "Risky port", p.src, f"{p.dst}:{p.dport}",
                         f"{p.src} connected to {p.dst} on port {p.dport} - {RISKY_PORTS[p.dport]}.", port=p.dport)
 

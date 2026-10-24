@@ -233,3 +233,32 @@ def test_acknowledge_alert():
     assert a.acknowledge(alert_id, "checked - my own test").acked
     assert a.snapshot()["alerts"][0]["ack_note"] == "checked - my own test"
     assert a.acknowledge("missing") is None
+
+
+def test_dns_replies_from_the_router_are_not_a_port_scan():
+    """Found in a live test: the router answers DNS lookups to many random ports on the laptop."""
+    from netmon.analyzer import Analyzer, PacketInfo
+
+    a = Analyzer()
+    for i in range(60):  # 60 DNS replies to 60 different client ports in 6 seconds
+        a.process(PacketInfo(1_792_000_000 + i * 0.1, "192.168.1.1", "192.168.1.103", "DNS", 120, 53, 50000 + i * 7))
+        a.process(PacketInfo(1_792_000_000 + i * 0.1, "142.250.66.78", "192.168.1.103", "UDP", 1200, 443, 60000 + i))
+    assert not [x for x in a.alerts if x.kind == "Port scan"]
+    for i, port in enumerate(range(1, 40)):  # a real UDP scan from a random source port is still caught
+        a.process(PacketInfo(1_792_000_010 + i * 0.05, "192.168.1.66", "192.168.1.103", "UDP", 60, 41000, port))
+    assert [x.source for x in a.alerts if x.kind == "Port scan"] == ["192.168.1.66"]
+
+
+def test_free_port_skips_a_busy_port():
+    import socket
+
+    from netmon.__main__ import free_port
+
+    busy = socket.socket()
+    busy.bind(("127.0.0.1", 0))
+    busy.listen(1)
+    port = busy.getsockname()[1]
+    try:
+        assert free_port("127.0.0.1", port) == port + 1 or free_port("127.0.0.1", port) > port
+    finally:
+        busy.close()

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 
-from .analyzer import PacketInfo, is_local, shannon_entropy
+from .analyzer import PacketInfo, is_local, shannon_entropy, starts_conversation
 
 FEATURES = [
     ("packets_out", "sent {v:,.0f} packets"),
@@ -84,7 +84,7 @@ class AnomalyDetector:
             f["packets_out"] += 1
             f["bytes_out"] += p.length
             f["peers"].add(p.dst)
-            starts = (p.proto == "TCP" and "S" in p.flags and "A" not in p.flags) or p.proto in ("UDP", "DNS")
+            starts = starts_conversation(p)
             if p.dport is not None and starts:
                 f["ports"].add(p.dport)
                 f["conn_attempts"] += 1
